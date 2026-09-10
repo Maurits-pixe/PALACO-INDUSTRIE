@@ -9,11 +9,11 @@ const HOST = process.env.HOST || "0.0.0.0";
 const PORT = Number(process.env.PORT || 3000);
 const GITHUB_OWNER = process.env.GITHUB_OWNER || "Maurits-pixe";
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || "";
+const SESSION_TTL_DAYS = Number(process.env.SESSION_TTL_DAYS || 30);
 const ROOT_DIR = __dirname;
 const DATA_DIR = path.join(ROOT_DIR, "data");
 const DATABASE_PATH = path.join(DATA_DIR, "palaco.db");
 const LEGACY_STORE_PATH = path.join(DATA_DIR, "palaco-store.json");
-const sessions = new Map();
 
 const DEFAULT_REPOSITORY_CATALOG = [
   {
@@ -206,6 +206,15 @@ function openDatabase() {
       created_at TEXT NOT NULL,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS sessions (
+      token TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
   `);
 }
 
@@ -225,6 +234,14 @@ function runInTransaction(callback) {
     database.exec("ROLLBACK");
     throw error;
   }
+}
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function buildSessionExpiry() {
+  return new Date(Date.now() + SESSION_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString();
 }
 
 function getUserById(userId) {
@@ -346,6 +363,45 @@ function saveCitadelForUser(user, citadel) {
     );
 
   return buildCitadel(user, getCitadelRowByUserId(user.id));
+}
+
+function deleteSession(token) {
+  database.prepare("DELETE FROM sessions WHERE token = ?").run(token);
+}
+
+function cleanupExpiredSessions() {
+  database.prepare("DELETE FROM sessions WHERE expires_at <= ?").run(nowIso());
+}
+
+function persistSession(userId) {
+  const token = crypto.randomBytes(24).toString("hex");
+  const createdAt = nowIso();
+
+  database
+    .prepare(
+      "INSERT INTO sessions (token, user_id, created_at, last_seen_at, expires_at) VALUES (?, ?, ?, ?, ?)"
+    )
+    .run(token, userId, createdAt, createdAt, buildSessionExpiry());
+
+  return token;
+}
+
+function getSessionRecord(token) {
+  return (
+    database
+      .prepare(
+        `SELECT token, user_id, created_at, last_seen_at, expires_at
+         FROM sessions
+         WHERE token = ?`
+      )
+      .get(token) || null
+  );
+}
+
+function touchSession(token) {
+  database
+    .prepare("UPDATE sessions SET last_seen_at = ?, expires_at = ? WHERE token = ?")
+    .run(nowIso(), buildSessionExpiry(), token);
 }
 
 function appendConversation(user, userMessage, rioMessage) {
@@ -506,9 +562,8 @@ async function getRepositoryCatalog(forceRefresh = false) {
 }
 
 function createSession(userId) {
-  const token = crypto.randomBytes(24).toString("hex");
-  sessions.set(token, userId);
-  return token;
+  cleanupExpiredSessions();
+  return persistSession(userId);
 }
 
 function getSessionToken(request) {
@@ -519,18 +574,25 @@ function getSessionToken(request) {
 function getAuthenticatedUser(request) {
   const token = getSessionToken(request);
 
-  if (!token || !sessions.has(token)) {
+  if (!token) {
     return null;
   }
 
-  const userId = sessions.get(token);
-  const user = getUserById(userId);
+  cleanupExpiredSessions();
+  const session = getSessionRecord(token);
+
+  if (!session) {
+    return null;
+  }
+
+  const user = getUserById(session.user_id);
 
   if (!user) {
-    sessions.delete(token);
+    deleteSession(token);
     return null;
   }
 
+  touchSession(token);
   return { token, user };
 }
 
@@ -654,7 +716,7 @@ function handleLogout(request, response) {
   const token = getSessionToken(request);
 
   if (token) {
-    sessions.delete(token);
+    deleteSession(token);
   }
 
   sendJson(response, 200, { ok: true });
@@ -753,6 +815,7 @@ async function serveStaticAsset(response, pathname) {
 
 openDatabase();
 migrateLegacyStore();
+cleanupExpiredSessions();
 
 const server = http.createServer(async (request, response) => {
   try {

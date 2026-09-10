@@ -60,6 +60,7 @@ The current build uses a small Node server to:
 - create and authenticate accounts
 - persist Citadel data
 - persist RIO chat history
+- persist sign-in sessions across server restarts
 - sync the repository catalog from GitHub
 - fall back to a local repository catalog when live sync is unavailable
 
@@ -80,7 +81,8 @@ Optional environment variables:
 
 - `GITHUB_OWNER` to load repositories for a different GitHub account
 - `GITHUB_TOKEN` to include private owned repositories in the sync
+- `SESSION_TTL_DAYS` to control how long persisted sign-in sessions remain valid
 
 When GitHub sync is unavailable, the interface falls back to the built-in PALACO repository catalog so the application remains usable.
 
-This build now uses SQLite for persistence, but it still does not include a managed production database, shared multi-user spaces, or advanced world-building features.
+This build now uses SQLite for persistence, including persisted sign-in sessions, but it still does not include a managed production database, shared multi-user spaces, or advanced world-building features.
