@@ -1,6 +1,5 @@
 const STORAGE_KEYS = {
-  citadel: "palaco-citadel",
-  messages: "palaco-rio-messages",
+  token: "palaco-auth-token",
 };
 
 const defaultCitadel = {
@@ -13,7 +12,7 @@ const defaultCitadel = {
 const defaultMessages = [
   {
     role: "rio",
-    text: "Welcome. I am RIO. I can help you create your Citadel and guide you through PALACO.",
+    text: "Welcome. I am RIO. Sign in to save your Citadel and your conversation.",
   },
 ];
 
@@ -71,12 +70,30 @@ const logoPages = {
   },
 };
 
+const state = {
+  token: readToken(),
+  user: null,
+  citadel: { ...defaultCitadel },
+  messages: [...defaultMessages],
+  repositories: [],
+  logoHistory: ["home"],
+  logoHistoryIndex: 0,
+};
+
+const signupForm = document.getElementById("signup-form");
+const loginForm = document.getElementById("login-form");
+const signupStatus = document.getElementById("signup-status");
+const loginStatus = document.getElementById("login-status");
+const sessionStatus = document.getElementById("session-status");
+const signoutButton = document.getElementById("signout-button");
 const citadelForm = document.getElementById("citadel-form");
 const resetCitadelButton = document.getElementById("reset-citadel");
 const citadelStatus = document.getElementById("citadel-status");
+const citadelAuthHint = document.getElementById("citadel-auth-hint");
 const rioForm = document.getElementById("rio-form");
 const rioInput = document.getElementById("rio-input");
 const rioMessages = document.getElementById("rio-messages");
+const rioAuthHint = document.getElementById("rio-auth-hint");
 const logoDestination = document.getElementById("logo-destination");
 const logoOpenButton = document.getElementById("logo-open");
 const logoBackButton = document.getElementById("logo-back");
@@ -84,25 +101,24 @@ const logoForwardButton = document.getElementById("logo-forward");
 const logoRefreshButton = document.getElementById("logo-refresh");
 const logoAddress = document.getElementById("logo-address");
 const logoFrame = document.getElementById("logo-frame");
+const repoList = document.getElementById("repo-list");
+const repoCount = document.getElementById("repo-count");
 
-let logoHistory = ["home"];
-let logoHistoryIndex = 0;
-
-function readStorage(key, fallback) {
-  try {
-    const value = window.localStorage.getItem(key);
-    return value ? JSON.parse(value) : fallback;
-  } catch {
-    return fallback;
-  }
+function readToken() {
+  return window.localStorage.getItem(STORAGE_KEYS.token) || "";
 }
 
-function writeStorage(key, value) {
-  window.localStorage.setItem(key, JSON.stringify(value));
+function writeToken(token) {
+  if (token) {
+    window.localStorage.setItem(STORAGE_KEYS.token, token);
+    return;
+  }
+
+  window.localStorage.removeItem(STORAGE_KEYS.token);
 }
 
 function escapeHtml(value) {
-  return value
+  return String(value)
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
@@ -114,27 +130,108 @@ function formatTheme(theme) {
   return theme.charAt(0).toUpperCase() + theme.slice(1);
 }
 
-function getCitadel() {
-  return { ...defaultCitadel, ...readStorage(STORAGE_KEYS.citadel, defaultCitadel) };
+async function requestJson(path, options = {}) {
+  const headers = {
+    "Content-Type": "application/json",
+    ...(options.headers || {}),
+  };
+
+  if (options.auth !== false && state.token) {
+    headers.Authorization = "Bearer " + state.token;
+  }
+
+  const response = await fetch(path, {
+    method: options.method || "GET",
+    headers,
+    body: options.body ? JSON.stringify(options.body) : undefined,
+  });
+
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    if (response.status === 401 && options.auth !== false) {
+      clearSession(payload.error || "Your session expired.");
+    }
+
+    throw new Error(payload.error || "Something went wrong.");
+  }
+
+  return payload;
 }
 
-function setCitadel(citadel) {
-  writeStorage(STORAGE_KEYS.citadel, citadel);
-  renderCitadel(citadel);
-  renderLogoPage(currentLogoPageKey());
+function setStatus(element, message, isError = false) {
+  element.textContent = message;
+  element.classList.toggle("is-error", isError);
 }
 
-function getMessages() {
-  const messages = readStorage(STORAGE_KEYS.messages, defaultMessages);
-  return Array.isArray(messages) ? messages.map((message) => ({ ...message })) : [...defaultMessages];
+function setFormBusy(form, busy) {
+  form.querySelectorAll("input, select, textarea, button").forEach((element) => {
+    element.disabled = busy;
+  });
 }
 
-function setMessages(messages) {
-  writeStorage(STORAGE_KEYS.messages, messages);
-  renderMessages(messages);
+function setInteractiveState(authenticated) {
+  citadelForm.querySelectorAll("input, select, textarea, button").forEach((element) => {
+    element.disabled = !authenticated;
+  });
+
+  rioForm.querySelectorAll("input, button").forEach((element) => {
+    element.disabled = !authenticated;
+  });
+
+  citadelAuthHint.textContent = authenticated
+    ? "Your Citadel changes are saved to your PALACO account."
+    : "Sign in first to save your Citadel on the server.";
+  rioAuthHint.textContent = authenticated
+    ? "RIO will reload your saved conversation whenever you return."
+    : "Sign in to load your saved RIO conversation.";
 }
 
-function renderCitadel(citadel) {
+function renderAccount(user) {
+  document.getElementById("account-name").textContent = user ? user.name : "Not signed in";
+  document.getElementById("account-email").textContent = user
+    ? user.email
+    : "Create an account to save your Citadel and RIO history.";
+  document.getElementById("account-language").textContent = `Preferred language: ${
+    user?.language || "-"
+  }`;
+  signoutButton.disabled = !user;
+}
+
+function renderRepositories() {
+  if (state.repositories.length === 0) {
+    repoCount.textContent = "No repositories are available yet.";
+    repoList.innerHTML = "";
+    return;
+  }
+
+  repoCount.textContent = `${state.repositories.length} repositories are available in this PALACO build.`;
+  repoList.innerHTML = state.repositories
+    .map(
+      (repository) => `
+        <article class="repository-card">
+          <h3>${escapeHtml(repository.name)}</h3>
+          <p>${escapeHtml(repository.description)}</p>
+          <div class="repository-card__actions">
+            <button class="button button--secondary" type="button" data-logo-repo="${escapeHtml(
+              repository.key
+            )}">
+              Open in L.O.G.O.
+            </button>
+            <a class="button button--ghost" href="${escapeHtml(
+              repository.url
+            )}" target="_blank" rel="noreferrer">
+              View on GitHub
+            </a>
+          </div>
+        </article>
+      `
+    )
+    .join("");
+}
+
+function renderCitadel() {
+  const citadel = state.citadel;
   document.getElementById("ownerName").value = citadel.ownerName;
   document.getElementById("citadelName").value = citadel.citadelName;
   document.getElementById("citadelTheme").value = citadel.citadelTheme;
@@ -151,10 +248,10 @@ function renderCitadel(citadel) {
     citadel.citadelDescription || "Save your first Citadel to see it appear here.";
 }
 
-function renderMessages(messages) {
+function renderMessages() {
   rioMessages.innerHTML = "";
 
-  messages.forEach((message) => {
+  state.messages.forEach((message) => {
     const element = document.createElement("article");
     element.className = `message message--${message.role}`;
     element.innerHTML = `<strong>${message.role === "rio" ? "RIO" : "You"}</strong><span>${escapeHtml(
@@ -166,27 +263,35 @@ function renderMessages(messages) {
   rioMessages.scrollTop = rioMessages.scrollHeight;
 }
 
-function rioReply(text, citadel) {
-  const normalised = text.toLowerCase();
-
-  if (normalised.includes("citadel") || normalised.includes("space")) {
-    return citadel.citadelName
-      ? `Your Citadel is ${citadel.citadelName}. You can keep shaping it by updating its name, theme, or description.`
-      : "You have not created a Citadel yet. Start with your name, a Citadel name, and a short description.";
+function buildDynamicLogoPage(pageKey) {
+  if (!pageKey.startsWith("repo:")) {
+    return null;
   }
 
-  if (normalised.includes("world") || normalised.includes("logo")) {
-    return "Open L.O.G.O. to explore guided destinations. This first build keeps browsing simple and safe.";
+  const repository = state.repositories.find((entry) => entry.key === pageKey.replace("repo:", ""));
+
+  if (!repository) {
+    return null;
   }
 
-  if (normalised.includes("hello") || normalised.includes("hi")) {
-    return "Hello. I am glad you are here. Tell me what you want your PALACO space to become.";
-  }
-
-  return "I can help you create your Citadel, explain RIO, or guide you to L.O.G.O.";
+  return {
+    path: `palaco://repository/${repository.key}`,
+    render: () => `
+      <article class="logo-page">
+        <h1>${escapeHtml(repository.name)}</h1>
+        <p>${escapeHtml(repository.description)}</p>
+        <p><a href="${escapeHtml(
+          repository.url
+        )}" target="_blank" rel="noreferrer">Open this repository on GitHub</a></p>
+      </article>
+    `,
+  };
 }
 
 function initLogoDestinations() {
+  const currentValue = logoDestination.value;
+  logoDestination.innerHTML = "";
+
   Object.entries(logoPages).forEach(([key, page]) => {
     const option = document.createElement("option");
     option.value = key;
@@ -194,11 +299,19 @@ function initLogoDestinations() {
     logoDestination.appendChild(option);
   });
 
-  logoDestination.value = "home";
+  state.repositories.forEach((repository) => {
+    const option = document.createElement("option");
+    option.value = `repo:${repository.key}`;
+    option.textContent = `Repository: ${repository.name}`;
+    logoDestination.appendChild(option);
+  });
+
+  const hasCurrentValue = [...logoDestination.options].some((option) => option.value === currentValue);
+  logoDestination.value = hasCurrentValue ? currentValue : "home";
 }
 
 function currentLogoPageKey() {
-  return logoHistory[logoHistoryIndex] || "home";
+  return state.logoHistory[state.logoHistoryIndex] || "home";
 }
 
 function logoDocument(content) {
@@ -231,62 +344,215 @@ function logoDocument(content) {
 }
 
 function renderLogoPage(pageKey, replace = true) {
-  const page = logoPages[pageKey] || logoPages.home;
-  const citadel = getCitadel();
+  const page = buildDynamicLogoPage(pageKey) || logoPages[pageKey] || logoPages.home;
 
   if (!replace) {
-    logoHistory = logoHistory.slice(0, logoHistoryIndex + 1);
-    logoHistory.push(pageKey);
-    logoHistoryIndex = logoHistory.length - 1;
+    state.logoHistory = state.logoHistory.slice(0, state.logoHistoryIndex + 1);
+    state.logoHistory.push(pageKey);
+    state.logoHistoryIndex = state.logoHistory.length - 1;
   }
 
   logoDestination.value = pageKey;
   logoAddress.textContent = page.path;
-  logoFrame.srcdoc = logoDocument(page.render(citadel));
-  logoBackButton.disabled = logoHistoryIndex === 0;
-  logoForwardButton.disabled = logoHistoryIndex === logoHistory.length - 1;
+  logoFrame.srcdoc = logoDocument(page.render(state.citadel));
+  logoBackButton.disabled = state.logoHistoryIndex === 0;
+  logoForwardButton.disabled = state.logoHistoryIndex === state.logoHistory.length - 1;
 }
 
-citadelForm.addEventListener("submit", (event) => {
-  event.preventDefault();
+function applySignedInState(payload, successMessage) {
+  if (payload.token) {
+    state.token = payload.token;
+    writeToken(payload.token);
+  }
 
-  const formData = new FormData(citadelForm);
-  const citadel = {
-    ownerName: formData.get("ownerName").toString().trim(),
-    citadelName: formData.get("citadelName").toString().trim(),
-    citadelTheme: formData.get("citadelTheme").toString(),
-    citadelDescription: formData.get("citadelDescription").toString().trim(),
-  };
+  state.user = payload.user;
+  state.citadel = payload.citadel || { ...defaultCitadel, ownerName: payload.user.name };
+  state.messages = Array.isArray(payload.messages) ? payload.messages : [...defaultMessages];
+  renderAccount(state.user);
+  renderCitadel();
+  renderMessages();
+  renderLogoPage(currentLogoPageKey());
+  setInteractiveState(true);
+  setStatus(sessionStatus, successMessage);
+}
 
-  if (!citadel.ownerName || !citadel.citadelName) {
-    citadelStatus.textContent = "Please add your name and a Citadel name first.";
+function clearSession(message = "Create an account or sign in to unlock saved progress.") {
+  state.token = "";
+  state.user = null;
+  state.citadel = { ...defaultCitadel };
+  state.messages = [...defaultMessages];
+  writeToken("");
+  renderAccount(null);
+  renderCitadel();
+  renderMessages();
+  renderLogoPage(currentLogoPageKey());
+  setInteractiveState(false);
+  setStatus(sessionStatus, message);
+}
+
+async function restoreSession() {
+  if (!state.token) {
+    clearSession();
     return;
   }
 
-  setCitadel(citadel);
-  citadelStatus.textContent = `${citadel.citadelName} is ready.`;
+  try {
+    const session = await requestJson("/api/auth/session");
+    const [citadel, messages] = await Promise.all([
+      requestJson("/api/citadel"),
+      requestJson("/api/messages"),
+    ]);
+
+    applySignedInState(
+      { user: session.user, citadel: citadel.citadel, messages: messages.messages },
+      `Welcome back ${session.user.name}.`
+    );
+  } catch (error) {
+    clearSession(error.message);
+  }
+}
+
+async function loadRepositories() {
+  try {
+    const payload = await requestJson("/api/repositories", { auth: false });
+    state.repositories = Array.isArray(payload.repositories) ? payload.repositories : [];
+    renderRepositories();
+    initLogoDestinations();
+    renderLogoPage(currentLogoPageKey());
+  } catch (error) {
+    repoCount.textContent = error.message;
+  }
+}
+
+signupForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  setStatus(signupStatus, "");
+  setStatus(loginStatus, "");
+  setFormBusy(signupForm, true);
+
+  try {
+    const payload = await requestJson("/api/auth/signup", {
+      method: "POST",
+      body: {
+        name: document.getElementById("signup-name").value.trim(),
+        email: document.getElementById("signup-email").value.trim(),
+        password: document.getElementById("signup-password").value,
+        language: document.getElementById("signup-language").value,
+      },
+    });
+
+    signupForm.reset();
+    document.getElementById("signup-language").value = "English";
+    applySignedInState(payload, `Account created for ${payload.user.name}.`);
+    setStatus(signupStatus, "Account created.");
+  } catch (error) {
+    setStatus(signupStatus, error.message, true);
+  } finally {
+    setFormBusy(signupForm, false);
+  }
+});
+
+loginForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  setStatus(signupStatus, "");
+  setStatus(loginStatus, "");
+  setFormBusy(loginForm, true);
+
+  try {
+    const payload = await requestJson("/api/auth/login", {
+      method: "POST",
+      body: {
+        email: document.getElementById("login-email").value.trim(),
+        password: document.getElementById("login-password").value,
+      },
+    });
+
+    loginForm.reset();
+    applySignedInState(payload, `Signed in as ${payload.user.name}.`);
+    setStatus(loginStatus, "Sign-in successful.");
+  } catch (error) {
+    setStatus(loginStatus, error.message, true);
+  } finally {
+    setFormBusy(loginForm, false);
+  }
+});
+
+signoutButton.addEventListener("click", async () => {
+  signoutButton.disabled = true;
+
+  try {
+    await requestJson("/api/auth/logout", { method: "POST" });
+  } catch {
+    // ignore logout errors and still clear the local session
+  } finally {
+    clearSession("You have signed out.");
+  }
+});
+
+citadelForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+
+  if (!state.user) {
+    setStatus(citadelStatus, "Please sign in first.", true);
+    return;
+  }
+
+  setStatus(citadelStatus, "");
+
+  try {
+    const formData = new FormData(citadelForm);
+    const payload = await requestJson("/api/citadel", {
+      method: "PUT",
+      body: {
+        ownerName: formData.get("ownerName").toString().trim(),
+        citadelName: formData.get("citadelName").toString().trim(),
+        citadelTheme: formData.get("citadelTheme").toString(),
+        citadelDescription: formData.get("citadelDescription").toString().trim(),
+      },
+    });
+
+    state.citadel = payload.citadel;
+    renderCitadel();
+    renderLogoPage(currentLogoPageKey());
+    setStatus(citadelStatus, `${payload.citadel.citadelName} is saved.`);
+  } catch (error) {
+    setStatus(citadelStatus, error.message, true);
+  }
 });
 
 resetCitadelButton.addEventListener("click", () => {
-  setCitadel(defaultCitadel);
-  citadelStatus.textContent = "Your Citadel form has been reset.";
+  renderCitadel();
+  setStatus(citadelStatus, state.user ? "Restored your saved Citadel details." : "");
 });
 
-rioForm.addEventListener("submit", (event) => {
+rioForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+
+  if (!state.user) {
+    setStatus(sessionStatus, "Please sign in before using RIO.", true);
+    return;
+  }
+
   const text = rioInput.value.trim();
 
   if (!text) {
     return;
   }
 
-  const citadel = getCitadel();
-  const messages = getMessages();
-  messages.push({ role: "user", text });
-  messages.push({ role: "rio", text: rioReply(text, citadel) });
-  setMessages(messages);
-  rioInput.value = "";
-  rioInput.focus();
+  try {
+    const payload = await requestJson("/api/messages", {
+      method: "POST",
+      body: { text },
+    });
+
+    state.messages = payload.messages;
+    renderMessages();
+    rioInput.value = "";
+    rioInput.focus();
+    setStatus(sessionStatus, `RIO is active for ${state.user.name}.`);
+  } catch (error) {
+    setStatus(sessionStatus, error.message, true);
+  }
 });
 
 logoOpenButton.addEventListener("click", () => {
@@ -294,15 +560,15 @@ logoOpenButton.addEventListener("click", () => {
 });
 
 logoBackButton.addEventListener("click", () => {
-  if (logoHistoryIndex > 0) {
-    logoHistoryIndex -= 1;
+  if (state.logoHistoryIndex > 0) {
+    state.logoHistoryIndex -= 1;
     renderLogoPage(currentLogoPageKey());
   }
 });
 
 logoForwardButton.addEventListener("click", () => {
-  if (logoHistoryIndex < logoHistory.length - 1) {
-    logoHistoryIndex += 1;
+  if (state.logoHistoryIndex < state.logoHistory.length - 1) {
+    state.logoHistoryIndex += 1;
     renderLogoPage(currentLogoPageKey());
   }
 });
@@ -311,7 +577,25 @@ logoRefreshButton.addEventListener("click", () => {
   renderLogoPage(currentLogoPageKey());
 });
 
-renderCitadel(getCitadel());
-setMessages(getMessages());
+repoList.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-logo-repo]");
+
+  if (!button) {
+    return;
+  }
+
+  const pageKey = `repo:${button.dataset.logoRepo}`;
+  logoDestination.value = pageKey;
+  renderLogoPage(pageKey, false);
+  document.getElementById("logo-browser").scrollIntoView({ behavior: "smooth", block: "start" });
+});
+
+renderAccount(null);
+renderCitadel();
+renderMessages();
+renderRepositories();
 initLogoDestinations();
 renderLogoPage("home");
+setInteractiveState(false);
+loadRepositories();
+restoreSession();

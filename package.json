@@ -1,0 +1,18 @@
+{
+  "name": "palaco-industrie",
+  "version": "1.0.0",
+  "description": "PALACO-INDUSTRIE is the foundation for the Future Internet Era (F.I.E.) program and the long-term development of the PALACO product ecosystem. The goal is to create a low-threshold, inclusive digital system in which every person can build and manage their own Citadel(s) and one or more PALACO'S WORLD(S).",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js && node --check app.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "http://localhost:26831/Maurits-pixe/PALACO-INDUSTRIE"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs"
+}

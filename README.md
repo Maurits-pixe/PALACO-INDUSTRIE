@@ -39,9 +39,33 @@ The repository now includes a first static PALACO prototype with:
 - a personal Citadel setup flow
 - a browser-based **RIO** chatbox prototype
 - a guided **L.O.G.O.** browser area with curated destinations
+- account-based sign-up and sign-in
+- backend persistence for Citadel data and RIO message history
+- repository-world integration for the current PALACO repository portfolio
 
 ## Local Usage
 
-Open `/home/runner/work/PALACO-INDUSTRIE/PALACO-INDUSTRIE/index.html` in a browser to use the prototype locally.
+Start the local PALACO server from `/home/runner/work/PALACO-INDUSTRIE/PALACO-INDUSTRIE`:
 
-The current build stores Citadel data and RIO chat history in the browser only. It does not yet include accounts, a backend, or shared multi-user functionality.
+```bash
+npm start
+```
+
+Then open `http://localhost:3000`.
+
+The current build uses a small Node server to:
+
+- serve the frontend
+- create and authenticate accounts
+- persist Citadel data
+- persist RIO chat history
+- expose the current PALACO repository catalog to the interface
+
+Saved application data is written locally to `/home/runner/work/PALACO-INDUSTRIE/PALACO-INDUSTRIE/data/palaco-store.json`.
+
+The current repository-world catalog includes:
+
+- `Maurits-pixe/PALACO`
+- `Maurits-pixe/PALACO-INDUSTRIE`
+
+This build still does not include a production database, shared multi-user spaces, or advanced world-building features.

@@ -41,6 +41,89 @@
         </ul>
       </section>
 
+      <section id="account-access" class="panel panel--split" aria-labelledby="account-title">
+        <div>
+          <h2 id="account-title">Create an account or sign in</h2>
+          <p class="section-copy">
+            This version now saves your Citadel and RIO history on the server.
+            Start with a simple PALACO account.
+          </p>
+
+          <div class="auth-grid">
+            <form id="signup-form" class="panel panel--nested stack" novalidate>
+              <h3>Create account</h3>
+              <label class="field">
+                <span>Name</span>
+                <input id="signup-name" name="name" type="text" maxlength="60" required />
+              </label>
+              <label class="field">
+                <span>Email</span>
+                <input id="signup-email" name="email" type="email" maxlength="120" required />
+              </label>
+              <label class="field">
+                <span>Password</span>
+                <input
+                  id="signup-password"
+                  name="password"
+                  type="password"
+                  minlength="8"
+                  maxlength="120"
+                  required
+                />
+              </label>
+              <label class="field">
+                <span>Preferred language</span>
+                <select id="signup-language" name="language">
+                  <option value="English">English</option>
+                  <option value="Nederlands">Nederlands</option>
+                </select>
+              </label>
+              <button class="button button--primary" type="submit">Create account</button>
+              <p id="signup-status" class="status-message" aria-live="polite"></p>
+            </form>
+
+            <form id="login-form" class="panel panel--nested stack" novalidate>
+              <h3>Sign in</h3>
+              <label class="field">
+                <span>Email</span>
+                <input id="login-email" name="email" type="email" maxlength="120" required />
+              </label>
+              <label class="field">
+                <span>Password</span>
+                <input
+                  id="login-password"
+                  name="password"
+                  type="password"
+                  minlength="8"
+                  maxlength="120"
+                  required
+                />
+              </label>
+              <button class="button button--secondary" type="submit">Sign in</button>
+              <p id="login-status" class="status-message" aria-live="polite"></p>
+            </form>
+          </div>
+        </div>
+
+        <aside class="panel panel--nested account-card" aria-labelledby="account-summary-title">
+          <p class="eyebrow">Account status</p>
+          <h3 id="account-summary-title">Your PALACO account</h3>
+          <p class="account-card__name" id="account-name">Not signed in</p>
+          <p class="account-card__meta" id="account-email">
+            Create an account to save your Citadel and RIO history.
+          </p>
+          <p class="account-card__meta" id="account-language">Preferred language: -</p>
+          <div class="button-row">
+            <button class="button button--ghost" type="button" id="signout-button" disabled>
+              Sign out
+            </button>
+          </div>
+          <p id="session-status" class="status-message" aria-live="polite">
+            Create an account or sign in to unlock saved progress.
+          </p>
+        </aside>
+      </section>
+
       <section
         id="citadel-builder"
         class="panel panel--split"
@@ -50,7 +133,11 @@
           <h2 id="citadel-title">Create your Citadel</h2>
           <p class="section-copy">
             Start by creating one personal Citadel. Keep it simple: choose a
-            name, a mood, and a short description.
+            name, a mood, and a short description. Your saved Citadel belongs to
+            your signed-in account.
+          </p>
+          <p id="citadel-auth-hint" class="notice">
+            Sign in first to save your Citadel on the server.
           </p>
 
           <form id="citadel-form" class="stack" novalidate>
@@ -121,12 +208,25 @@
         </aside>
       </section>
 
+      <section class="panel" aria-labelledby="repositories-title">
+        <h2 id="repositories-title">PALACO repository worlds</h2>
+        <p class="section-copy">
+          This build now uses your repository network as part of the guided
+          PALACO experience.
+        </p>
+        <p id="repo-count" class="notice">Loading your repositories...</p>
+        <div id="repo-list" class="repository-list" aria-live="polite"></div>
+      </section>
+
       <section id="rio-chat" class="panel panel--split" aria-labelledby="rio-title">
         <div>
           <h2 id="rio-title">RIO chatbox</h2>
           <p class="section-copy">
-            RIO welcomes users with calm, direct language. This prototype keeps
-            your conversation in your browser only.
+            RIO welcomes users with calm, direct language. Your messages are now
+            tied to your account and loaded from the server when you return.
+          </p>
+          <p id="rio-auth-hint" class="notice">
+            Sign in to load your saved RIO conversation.
           </p>
           <div id="rio-messages" class="chatbox" aria-live="polite" aria-label="RIO chat messages"></div>
           <form id="rio-form" class="chat-form">
@@ -148,10 +248,10 @@
         <aside class="panel panel--nested">
           <h3>What RIO can do in this first build</h3>
           <ul class="feature-list">
-            <li>Greet the user</li>
+            <li>Greet the signed-in user</li>
             <li>React to questions about the Citadel</li>
             <li>Encourage simple next steps</li>
-            <li>Store conversation locally in the browser</li>
+            <li>Store conversation history on the server</li>
           </ul>
         </aside>
       </section>
