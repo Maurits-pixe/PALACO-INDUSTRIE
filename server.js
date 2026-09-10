@@ -214,6 +214,19 @@ function databaseHasUsers() {
   return Number(row?.count || 0) > 0;
 }
 
+function runInTransaction(callback) {
+  database.exec("BEGIN");
+
+  try {
+    const result = callback();
+    database.exec("COMMIT");
+    return result;
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
+}
+
 function getUserById(userId) {
   return mapUserRow(
     database
@@ -287,30 +300,29 @@ function createUserRecord({ name, email, language, passwordHash }) {
     createdAt: new Date().toISOString(),
   };
 
-  const createUser = database.transaction((record) => {
+  runInTransaction(() => {
     database
       .prepare(
         "INSERT INTO users (id, name, email, language, password_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)"
       )
       .run(
-        record.id,
-        record.name,
-        record.email,
-        record.language,
-        record.passwordHash,
-        record.createdAt
+        user.id,
+        user.name,
+        user.email,
+        user.language,
+        user.passwordHash,
+        user.createdAt
       );
 
     database
       .prepare(
         "INSERT INTO citadels (user_id, owner_name, citadel_name, citadel_theme, citadel_description) VALUES (?, ?, ?, ?, ?)"
       )
-      .run(record.id, record.name, "", "light", "");
+      .run(user.id, user.name, "", "light", "");
 
-    insertMessages(record.id, defaultMessages(record.name));
+    insertMessages(user.id, defaultMessages(user.name));
   });
 
-  createUser(user);
   return user;
 }
 
@@ -337,14 +349,13 @@ function saveCitadelForUser(user, citadel) {
 }
 
 function appendConversation(user, userMessage, rioMessage) {
-  const addConversation = database.transaction((account, text, reply) => {
-    insertMessages(account.id, [
-      { role: "user", text },
-      { role: "rio", text: reply },
+  runInTransaction(() => {
+    insertMessages(user.id, [
+      { role: "user", text: userMessage },
+      { role: "rio", text: rioMessage },
     ]);
   });
 
-  addConversation(user, userMessage, rioMessage);
   return getMessagesByUserId(user.id);
 }
 
@@ -367,8 +378,8 @@ function migrateLegacyStore() {
     return;
   }
 
-  const migrate = database.transaction((legacyUsers) => {
-    for (const legacyUser of legacyUsers) {
+  runInTransaction(() => {
+    for (const legacyUser of users) {
       const id = cleanText(legacyUser.id || crypto.randomUUID(), 80);
       const name = cleanText(legacyUser.name, 60);
       const email = normaliseEmail(legacyUser.email);
@@ -408,8 +419,6 @@ function migrateLegacyStore() {
       insertMessages(id, legacyMessages);
     }
   });
-
-  migrate(users);
 }
 
 async function fetchGitHubRepositories() {
