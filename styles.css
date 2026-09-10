@@ -316,6 +316,15 @@ p {
   gap: 1rem;
 }
 
+.repository-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
 .repository-card {
   display: grid;
   gap: 0.75rem;
@@ -333,6 +342,13 @@ p {
 .repository-card p {
   color: var(--text-soft);
   line-height: 1.6;
+}
+
+.repository-card__meta {
+  font-size: 0.9rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .repository-card__actions {
@@ -391,6 +407,10 @@ p {
   .panel--intro,
   .panel--split {
     grid-template-columns: 1fr;
+  }
+
+  .repository-toolbar {
+    align-items: stretch;
   }
 
   .chat-form {

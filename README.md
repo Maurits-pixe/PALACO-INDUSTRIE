@@ -42,6 +42,7 @@ The repository now includes a first static PALACO prototype with:
 - account-based sign-up and sign-in
 - backend persistence for Citadel data and RIO message history
 - repository-world integration for the current PALACO repository portfolio
+- live GitHub repository sync with fallback catalog support
 
 ## Local Usage
 
@@ -59,7 +60,8 @@ The current build uses a small Node server to:
 - create and authenticate accounts
 - persist Citadel data
 - persist RIO chat history
-- expose the current PALACO repository catalog to the interface
+- sync the repository catalog from GitHub
+- fall back to a local repository catalog when live sync is unavailable
 
 Saved application data is written locally to `/home/runner/work/PALACO-INDUSTRIE/PALACO-INDUSTRIE/data/palaco-store.json`.
 
@@ -67,5 +69,16 @@ The current repository-world catalog includes:
 
 - `Maurits-pixe/PALACO`
 - `Maurits-pixe/PALACO-INDUSTRIE`
+
+## GitHub Repository Sync
+
+By default, the server loads public repositories from `Maurits-pixe` through the GitHub API.
+
+Optional environment variables:
+
+- `GITHUB_OWNER` to load repositories for a different GitHub account
+- `GITHUB_TOKEN` to include private owned repositories in the sync
+
+When GitHub sync is unavailable, the interface falls back to the built-in PALACO repository catalog so the application remains usable.
 
 This build still does not include a production database, shared multi-user spaces, or advanced world-building features.

@@ -103,6 +103,7 @@ const logoAddress = document.getElementById("logo-address");
 const logoFrame = document.getElementById("logo-frame");
 const repoList = document.getElementById("repo-list");
 const repoCount = document.getElementById("repo-count");
+const repoRefreshButton = document.getElementById("repo-refresh");
 
 function readToken() {
   return window.localStorage.getItem(STORAGE_KEYS.token) || "";
@@ -211,6 +212,9 @@ function renderRepositories() {
       (repository) => `
         <article class="repository-card">
           <h3>${escapeHtml(repository.name)}</h3>
+          <p class="repository-card__meta">Visibility: ${escapeHtml(
+            repository.visibility || "unknown"
+          )}</p>
           <p>${escapeHtml(repository.description)}</p>
           <div class="repository-card__actions">
             <button class="button button--secondary" type="button" data-logo-repo="${escapeHtml(
@@ -414,13 +418,22 @@ async function restoreSession() {
 
 async function loadRepositories() {
   try {
-    const payload = await requestJson("/api/repositories", { auth: false });
+    repoRefreshButton.disabled = true;
+    repoCount.textContent = "Loading your repositories...";
+    const payload = await requestJson(
+      `/api/repositories${repoRefreshButton.dataset.refresh === "1" ? "?refresh=1" : ""}`,
+      { auth: false }
+    );
     state.repositories = Array.isArray(payload.repositories) ? payload.repositories : [];
     renderRepositories();
+    repoCount.textContent = `${state.repositories.length} repositories loaded from ${payload.source}.`;
     initLogoDestinations();
     renderLogoPage(currentLogoPageKey());
   } catch (error) {
     repoCount.textContent = error.message;
+  } finally {
+    repoRefreshButton.disabled = false;
+    repoRefreshButton.dataset.refresh = "0";
   }
 }
 
@@ -588,6 +601,11 @@ repoList.addEventListener("click", (event) => {
   logoDestination.value = pageKey;
   renderLogoPage(pageKey, false);
   document.getElementById("logo-browser").scrollIntoView({ behavior: "smooth", block: "start" });
+});
+
+repoRefreshButton.addEventListener("click", () => {
+  repoRefreshButton.dataset.refresh = "1";
+  loadRepositories();
 });
 
 renderAccount(null);

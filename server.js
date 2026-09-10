@@ -5,11 +5,13 @@ const crypto = require("node:crypto");
 
 const HOST = process.env.HOST || "0.0.0.0";
 const PORT = Number(process.env.PORT || 3000);
+const GITHUB_OWNER = process.env.GITHUB_OWNER || "Maurits-pixe";
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN || "";
 const ROOT_DIR = __dirname;
 const DATA_DIR = path.join(ROOT_DIR, "data");
 const STORE_PATH = path.join(DATA_DIR, "palaco-store.json");
 const sessions = new Map();
-const REPOSITORY_CATALOG = [
+const DEFAULT_REPOSITORY_CATALOG = [
   {
     key: "palaco",
     name: "PALACO",
@@ -23,6 +25,12 @@ const REPOSITORY_CATALOG = [
     description: "The implementation repository for the PALACO-INDUSTRIE prototype.",
   },
 ];
+let repositoryCache = {
+  owner: GITHUB_OWNER,
+  repositories: DEFAULT_REPOSITORY_CATALOG,
+  fetchedAt: 0,
+  source: "fallback",
+};
 
 const STATIC_FILES = {
   "/": "index.html",
@@ -115,6 +123,98 @@ function normaliseEmail(value) {
 
 function cleanText(value, maxLength) {
   return String(value || "").trim().slice(0, maxLength);
+}
+
+function repositoryKey(name) {
+  return String(name || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+async function fetchGitHubRepositories() {
+  const headers = {
+    Accept: "application/vnd.github+json",
+    "User-Agent": "PALACO-INDUSTRIE",
+  };
+
+  if (GITHUB_TOKEN) {
+    headers.Authorization = "Bearer " + GITHUB_TOKEN;
+  }
+
+  const repositories = [];
+  let page = 1;
+
+  while (page <= 10) {
+    const endpoint = GITHUB_TOKEN
+      ? `https://api.github.com/user/repos?affiliation=owner&sort=updated&per_page=100&page=${page}`
+      : `https://api.github.com/users/${encodeURIComponent(
+          GITHUB_OWNER
+        )}/repos?sort=updated&per_page=100&page=${page}`;
+    const response = await fetch(endpoint, { headers });
+
+    if (!response.ok) {
+      throw new Error(`GitHub sync failed with status ${response.status}.`);
+    }
+
+    const payload = await response.json();
+    const pageItems = Array.isArray(payload) ? payload : [];
+    const ownedItems = pageItems.filter(
+      (repository) => repository?.owner?.login?.toLowerCase() === GITHUB_OWNER.toLowerCase()
+    );
+
+    repositories.push(
+      ...ownedItems.map((repository) => ({
+        key: repositoryKey(repository.name),
+        name: repository.name,
+        url: repository.html_url,
+        description:
+          cleanText(repository.description, 200) ||
+          `Repository from ${GITHUB_OWNER}'s PALACO network.`,
+        visibility: repository.private ? "private" : "public",
+      }))
+    );
+
+    if (pageItems.length < 100) {
+      break;
+    }
+
+    page += 1;
+  }
+
+  if (repositories.length === 0) {
+    throw new Error("GitHub sync returned no repositories.");
+  }
+
+  return repositories;
+}
+
+async function getRepositoryCatalog(forceRefresh = false) {
+  const cacheIsFresh = Date.now() - repositoryCache.fetchedAt < 5 * 60 * 1000;
+
+  if (!forceRefresh && cacheIsFresh && repositoryCache.repositories.length > 0) {
+    return repositoryCache;
+  }
+
+  try {
+    const repositories = await fetchGitHubRepositories();
+    repositoryCache = {
+      owner: GITHUB_OWNER,
+      repositories,
+      fetchedAt: Date.now(),
+      source: GITHUB_TOKEN ? "github-authenticated" : "github-public",
+    };
+  } catch {
+    repositoryCache = {
+      owner: GITHUB_OWNER,
+      repositories: DEFAULT_REPOSITORY_CATALOG,
+      fetchedAt: Date.now(),
+      source: "fallback",
+    };
+  }
+
+  return repositoryCache;
 }
 
 function buildPublicUser(user) {
@@ -465,7 +565,9 @@ const server = http.createServer(async (request, response) => {
     }
 
     if (request.method === "GET" && pathname === "/api/repositories") {
-      sendJson(response, 200, { repositories: REPOSITORY_CATALOG });
+      const forceRefresh = url.searchParams.get("refresh") === "1";
+      const catalog = await getRepositoryCatalog(forceRefresh);
+      sendJson(response, 200, catalog);
       return;
     }
 
