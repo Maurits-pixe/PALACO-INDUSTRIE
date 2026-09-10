@@ -1,7 +1,9 @@
 const http = require("node:http");
-const fs = require("node:fs/promises");
+const fs = require("node:fs");
+const fsPromises = require("node:fs/promises");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const { DatabaseSync } = require("node:sqlite");
 
 const HOST = process.env.HOST || "0.0.0.0";
 const PORT = Number(process.env.PORT || 3000);
@@ -9,8 +11,10 @@ const GITHUB_OWNER = process.env.GITHUB_OWNER || "Maurits-pixe";
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || "";
 const ROOT_DIR = __dirname;
 const DATA_DIR = path.join(ROOT_DIR, "data");
-const STORE_PATH = path.join(DATA_DIR, "palaco-store.json");
+const DATABASE_PATH = path.join(DATA_DIR, "palaco.db");
+const LEGACY_STORE_PATH = path.join(DATA_DIR, "palaco-store.json");
 const sessions = new Map();
+
 const DEFAULT_REPOSITORY_CATALOG = [
   {
     key: "palaco",
@@ -25,6 +29,7 @@ const DEFAULT_REPOSITORY_CATALOG = [
     description: "The implementation repository for the PALACO-INDUSTRIE prototype.",
   },
 ];
+
 let repositoryCache = {
   owner: GITHUB_OWNER,
   repositories: DEFAULT_REPOSITORY_CATALOG,
@@ -46,6 +51,10 @@ const CONTENT_TYPES = {
   ".json": "application/json; charset=utf-8",
 };
 
+const THEMES = new Set(["light", "sunrise", "forest", "midnight"]);
+
+let database;
+
 const defaultMessages = (name = "there") => [
   {
     role: "rio",
@@ -65,26 +74,20 @@ function sendError(response, statusCode, message) {
   sendJson(response, statusCode, { error: message });
 }
 
-async function ensureStore() {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-
-  try {
-    await fs.access(STORE_PATH);
-  } catch {
-    await fs.writeFile(STORE_PATH, JSON.stringify({ users: [] }, null, 2));
-  }
+function cleanText(value, maxLength) {
+  return String(value || "").trim().slice(0, maxLength);
 }
 
-async function loadStore() {
-  await ensureStore();
-  const raw = await fs.readFile(STORE_PATH, "utf8");
-  const store = JSON.parse(raw);
-  return Array.isArray(store.users) ? store : { users: [] };
+function normaliseEmail(value) {
+  return String(value || "").trim().toLowerCase();
 }
 
-async function saveStore(store) {
-  await ensureStore();
-  await fs.writeFile(STORE_PATH, JSON.stringify(store, null, 2));
+function repositoryKey(name) {
+  return String(name || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 function readRequestBody(request) {
@@ -117,20 +120,296 @@ function readRequestBody(request) {
   });
 }
 
-function normaliseEmail(value) {
-  return String(value || "").trim().toLowerCase();
+function mapUserRow(row) {
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    name: row.name,
+    email: row.email,
+    language: row.language,
+    passwordHash: row.password_hash,
+    createdAt: row.created_at,
+  };
 }
 
-function cleanText(value, maxLength) {
-  return String(value || "").trim().slice(0, maxLength);
+function buildPublicUser(user) {
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    language: user.language,
+    createdAt: user.createdAt,
+  };
 }
 
-function repositoryKey(name) {
-  return String(name || "")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+function buildCitadel(user, row = null) {
+  return {
+    ownerName: row?.owner_name || user.name,
+    citadelName: row?.citadel_name || "",
+    citadelTheme: row?.citadel_theme || "light",
+    citadelDescription: row?.citadel_description || "",
+  };
+}
+
+function buildRioReply(text, user, citadel) {
+  const message = text.toLowerCase();
+
+  if (message.includes("citadel") || message.includes("space")) {
+    return citadel.citadelName
+      ? `Your Citadel is ${citadel.citadelName}. You can continue shaping it whenever you want.`
+      : "You do not have a saved Citadel yet. Start by giving it a name and short description.";
+  }
+
+  if (message.includes("world") || message.includes("logo")) {
+    return "Open L.O.G.O. to explore the guided PALACO destinations in this first version.";
+  }
+
+  if (message.includes("hello") || message.includes("hi")) {
+    return `Hello ${user.name}. Tell me what you want your Citadel to become.`;
+  }
+
+  return "I can help with your account, your Citadel, RIO, or the guided L.O.G.O. experience.";
+}
+
+function openDatabase() {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  database = new DatabaseSync(DATABASE_PATH);
+  database.exec(`
+    PRAGMA foreign_keys = ON;
+
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL UNIQUE,
+      language TEXT NOT NULL,
+      password_hash TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS citadels (
+      user_id TEXT PRIMARY KEY,
+      owner_name TEXT NOT NULL,
+      citadel_name TEXT NOT NULL,
+      citadel_theme TEXT NOT NULL,
+      citadel_description TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      text TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+  `);
+}
+
+function databaseHasUsers() {
+  const row = database.prepare("SELECT COUNT(*) AS count FROM users").get();
+  return Number(row?.count || 0) > 0;
+}
+
+function getUserById(userId) {
+  return mapUserRow(
+    database
+      .prepare(
+        "SELECT id, name, email, language, password_hash, created_at FROM users WHERE id = ?"
+      )
+      .get(userId)
+  );
+}
+
+function getUserByEmail(email) {
+  return mapUserRow(
+    database
+      .prepare(
+        "SELECT id, name, email, language, password_hash, created_at FROM users WHERE email = ?"
+      )
+      .get(email)
+  );
+}
+
+function getCitadelRowByUserId(userId) {
+  return (
+    database
+      .prepare(
+        "SELECT owner_name, citadel_name, citadel_theme, citadel_description FROM citadels WHERE user_id = ?"
+      )
+      .get(userId) || null
+  );
+}
+
+function getMessagesByUserId(userId) {
+  const rows = database
+    .prepare("SELECT role, text FROM messages WHERE user_id = ? ORDER BY id ASC")
+    .all(userId);
+
+  return rows.map((row) => ({
+    role: row.role,
+    text: row.text,
+  }));
+}
+
+function insertMessages(userId, messages) {
+  const statement = database.prepare(
+    "INSERT INTO messages (user_id, role, text, created_at) VALUES (?, ?, ?, ?)"
+  );
+  const timestamp = new Date().toISOString();
+
+  for (const message of messages) {
+    statement.run(userId, message.role, cleanText(message.text, 500), timestamp);
+  }
+}
+
+function ensureMessagesForUser(user) {
+  const messages = getMessagesByUserId(user.id);
+
+  if (messages.length > 0) {
+    return messages;
+  }
+
+  insertMessages(user.id, defaultMessages(user.name));
+  return getMessagesByUserId(user.id);
+}
+
+function createUserRecord({ name, email, language, passwordHash }) {
+  const user = {
+    id: crypto.randomUUID(),
+    name,
+    email,
+    language,
+    passwordHash,
+    createdAt: new Date().toISOString(),
+  };
+
+  const createUser = database.transaction((record) => {
+    database
+      .prepare(
+        "INSERT INTO users (id, name, email, language, password_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)"
+      )
+      .run(
+        record.id,
+        record.name,
+        record.email,
+        record.language,
+        record.passwordHash,
+        record.createdAt
+      );
+
+    database
+      .prepare(
+        "INSERT INTO citadels (user_id, owner_name, citadel_name, citadel_theme, citadel_description) VALUES (?, ?, ?, ?, ?)"
+      )
+      .run(record.id, record.name, "", "light", "");
+
+    insertMessages(record.id, defaultMessages(record.name));
+  });
+
+  createUser(user);
+  return user;
+}
+
+function saveCitadelForUser(user, citadel) {
+  database
+    .prepare(
+      `INSERT INTO citadels (user_id, owner_name, citadel_name, citadel_theme, citadel_description)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(user_id) DO UPDATE SET
+         owner_name = excluded.owner_name,
+         citadel_name = excluded.citadel_name,
+         citadel_theme = excluded.citadel_theme,
+         citadel_description = excluded.citadel_description`
+    )
+    .run(
+      user.id,
+      citadel.ownerName,
+      citadel.citadelName,
+      citadel.citadelTheme,
+      citadel.citadelDescription
+    );
+
+  return buildCitadel(user, getCitadelRowByUserId(user.id));
+}
+
+function appendConversation(user, userMessage, rioMessage) {
+  const addConversation = database.transaction((account, text, reply) => {
+    insertMessages(account.id, [
+      { role: "user", text },
+      { role: "rio", text: reply },
+    ]);
+  });
+
+  addConversation(user, userMessage, rioMessage);
+  return getMessagesByUserId(user.id);
+}
+
+function migrateLegacyStore() {
+  if (databaseHasUsers() || !fs.existsSync(LEGACY_STORE_PATH)) {
+    return;
+  }
+
+  let parsed;
+
+  try {
+    parsed = JSON.parse(fs.readFileSync(LEGACY_STORE_PATH, "utf8"));
+  } catch {
+    return;
+  }
+
+  const users = Array.isArray(parsed?.users) ? parsed.users : [];
+
+  if (users.length === 0) {
+    return;
+  }
+
+  const migrate = database.transaction((legacyUsers) => {
+    for (const legacyUser of legacyUsers) {
+      const id = cleanText(legacyUser.id || crypto.randomUUID(), 80);
+      const name = cleanText(legacyUser.name, 60);
+      const email = normaliseEmail(legacyUser.email);
+      const language = cleanText(legacyUser.language || "English", 40) || "English";
+      const passwordHash = cleanText(legacyUser.passwordHash, 255);
+      const createdAt = cleanText(legacyUser.createdAt, 64) || new Date().toISOString();
+
+      if (!id || !name || !email || !passwordHash) {
+        continue;
+      }
+
+      database
+        .prepare(
+          "INSERT OR IGNORE INTO users (id, name, email, language, password_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)"
+        )
+        .run(id, name, email, language, passwordHash, createdAt);
+
+      const legacyCitadel = legacyUser.citadel || {};
+      database
+        .prepare(
+          `INSERT OR REPLACE INTO citadels (user_id, owner_name, citadel_name, citadel_theme, citadel_description)
+           VALUES (?, ?, ?, ?, ?)`
+        )
+        .run(
+          id,
+          cleanText(legacyCitadel.ownerName || name, 60) || name,
+          cleanText(legacyCitadel.citadelName, 80),
+          THEMES.has(legacyCitadel.citadelTheme) ? legacyCitadel.citadelTheme : "light",
+          cleanText(legacyCitadel.citadelDescription, 220)
+        );
+
+      database.prepare("DELETE FROM messages WHERE user_id = ?").run(id);
+      const legacyMessages =
+        Array.isArray(legacyUser.messages) && legacyUser.messages.length > 0
+          ? legacyUser.messages
+          : defaultMessages(name);
+      insertMessages(id, legacyMessages);
+    }
+  });
+
+  migrate(users);
 }
 
 async function fetchGitHubRepositories() {
@@ -217,46 +496,6 @@ async function getRepositoryCatalog(forceRefresh = false) {
   return repositoryCache;
 }
 
-function buildPublicUser(user) {
-  return {
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    language: user.language,
-    createdAt: user.createdAt,
-  };
-}
-
-function buildCitadel(user) {
-  return {
-    ownerName: user.citadel?.ownerName || user.name,
-    citadelName: user.citadel?.citadelName || "",
-    citadelTheme: user.citadel?.citadelTheme || "light",
-    citadelDescription: user.citadel?.citadelDescription || "",
-  };
-}
-
-function buildRioReply(text, user) {
-  const message = text.toLowerCase();
-  const citadel = buildCitadel(user);
-
-  if (message.includes("citadel") || message.includes("space")) {
-    return citadel.citadelName
-      ? `Your Citadel is ${citadel.citadelName}. You can continue shaping it whenever you want.`
-      : "You do not have a saved Citadel yet. Start by giving it a name and short description.";
-  }
-
-  if (message.includes("world") || message.includes("logo")) {
-    return "Open L.O.G.O. to explore the guided PALACO destinations in this first version.";
-  }
-
-  if (message.includes("hello") || message.includes("hi")) {
-    return `Hello ${user.name}. Tell me what you want your Citadel to become.`;
-  }
-
-  return "I can help with your account, your Citadel, RIO, or the guided L.O.G.O. experience.";
-}
-
 function createSession(userId) {
   const token = crypto.randomBytes(24).toString("hex");
   sessions.set(token, userId);
@@ -268,7 +507,7 @@ function getSessionToken(request) {
   return header.startsWith("Bearer ") ? header.slice(7) : "";
 }
 
-async function getAuthenticatedUser(request) {
+function getAuthenticatedUser(request) {
   const token = getSessionToken(request);
 
   if (!token || !sessions.has(token)) {
@@ -276,15 +515,14 @@ async function getAuthenticatedUser(request) {
   }
 
   const userId = sessions.get(token);
-  const store = await loadStore();
-  const user = store.users.find((candidate) => candidate.id === userId);
+  const user = getUserById(userId);
 
   if (!user) {
     sessions.delete(token);
     return null;
   }
 
-  return { token, store, user };
+  return { token, user };
 }
 
 async function hashPassword(password) {
@@ -345,39 +583,24 @@ async function handleSignup(request, response) {
     return;
   }
 
-  const store = await loadStore();
-  const exists = store.users.some((user) => user.email === email);
-
-  if (exists) {
+  if (getUserByEmail(email)) {
     sendError(response, 409, "An account with that email already exists.");
     return;
   }
 
-  const user = {
-    id: crypto.randomUUID(),
+  const user = createUserRecord({
     name,
     email,
     language,
     passwordHash: await hashPassword(password),
-    createdAt: new Date().toISOString(),
-    citadel: {
-      ownerName: name,
-      citadelName: "",
-      citadelTheme: "light",
-      citadelDescription: "",
-    },
-    messages: defaultMessages(name),
-  };
-
-  store.users.push(user);
-  await saveStore(store);
-
+  });
   const token = createSession(user.id);
+
   sendJson(response, 201, {
     token,
     user: buildPublicUser(user),
-    citadel: buildCitadel(user),
-    messages: user.messages,
+    citadel: buildCitadel(user, getCitadelRowByUserId(user.id)),
+    messages: getMessagesByUserId(user.id),
   });
 }
 
@@ -391,8 +614,7 @@ async function handleLogin(request, response) {
     return;
   }
 
-  const store = await loadStore();
-  const user = store.users.find((candidate) => candidate.email === email);
+  const user = getUserByEmail(email);
 
   if (!user || !(await verifyPassword(password, user.passwordHash))) {
     sendError(response, 401, "Incorrect email or password.");
@@ -403,13 +625,13 @@ async function handleLogin(request, response) {
   sendJson(response, 200, {
     token,
     user: buildPublicUser(user),
-    citadel: buildCitadel(user),
-    messages: Array.isArray(user.messages) ? user.messages : defaultMessages(user.name),
+    citadel: buildCitadel(user, getCitadelRowByUserId(user.id)),
+    messages: ensureMessagesForUser(user),
   });
 }
 
 async function handleSession(request, response) {
-  const auth = await getAuthenticatedUser(request);
+  const auth = getAuthenticatedUser(request);
 
   if (!auth) {
     sendError(response, 401, "Sign in to continue.");
@@ -430,18 +652,20 @@ function handleLogout(request, response) {
 }
 
 async function handleGetCitadel(request, response) {
-  const auth = await getAuthenticatedUser(request);
+  const auth = getAuthenticatedUser(request);
 
   if (!auth) {
     sendError(response, 401, "Sign in to load your Citadel.");
     return;
   }
 
-  sendJson(response, 200, { citadel: buildCitadel(auth.user) });
+  sendJson(response, 200, {
+    citadel: buildCitadel(auth.user, getCitadelRowByUserId(auth.user.id)),
+  });
 }
 
 async function handleSaveCitadel(request, response) {
-  const auth = await getAuthenticatedUser(request);
+  const auth = getAuthenticatedUser(request);
 
   if (!auth) {
     sendError(response, 401, "Sign in to save your Citadel.");
@@ -449,47 +673,36 @@ async function handleSaveCitadel(request, response) {
   }
 
   const body = await readRequestBody(request);
-  const ownerName = cleanText(body.ownerName || auth.user.name, 60) || auth.user.name;
-  const citadelName = cleanText(body.citadelName, 80);
-  const citadelTheme = ["light", "sunrise", "forest", "midnight"].includes(body.citadelTheme)
-    ? body.citadelTheme
-    : "light";
-  const citadelDescription = cleanText(body.citadelDescription, 220);
+  const citadel = {
+    ownerName: cleanText(body.ownerName || auth.user.name, 60) || auth.user.name,
+    citadelName: cleanText(body.citadelName, 80),
+    citadelTheme: THEMES.has(body.citadelTheme) ? body.citadelTheme : "light",
+    citadelDescription: cleanText(body.citadelDescription, 220),
+  };
 
-  if (!citadelName) {
+  if (!citadel.citadelName) {
     sendError(response, 400, "Please choose a Citadel name.");
     return;
   }
 
-  auth.user.citadel = {
-    ownerName,
-    citadelName,
-    citadelTheme,
-    citadelDescription,
-  };
-
-  await saveStore(auth.store);
-  sendJson(response, 200, { citadel: buildCitadel(auth.user) });
+  sendJson(response, 200, {
+    citadel: saveCitadelForUser(auth.user, citadel),
+  });
 }
 
 async function handleGetMessages(request, response) {
-  const auth = await getAuthenticatedUser(request);
+  const auth = getAuthenticatedUser(request);
 
   if (!auth) {
     sendError(response, 401, "Sign in to load RIO history.");
     return;
   }
 
-  if (!Array.isArray(auth.user.messages) || auth.user.messages.length === 0) {
-    auth.user.messages = defaultMessages(auth.user.name);
-    await saveStore(auth.store);
-  }
-
-  sendJson(response, 200, { messages: auth.user.messages });
+  sendJson(response, 200, { messages: ensureMessagesForUser(auth.user) });
 }
 
 async function handlePostMessage(request, response) {
-  const auth = await getAuthenticatedUser(request);
+  const auth = getAuthenticatedUser(request);
 
   if (!auth) {
     sendError(response, 401, "Sign in to talk with RIO.");
@@ -504,19 +717,14 @@ async function handlePostMessage(request, response) {
     return;
   }
 
-  const messages = Array.isArray(auth.user.messages)
-    ? auth.user.messages
-    : defaultMessages(auth.user.name);
+  const citadel = buildCitadel(auth.user, getCitadelRowByUserId(auth.user.id));
+  const reply = buildRioReply(text, auth.user, citadel);
+  const messages = appendConversation(auth.user, text, reply);
 
-  messages.push({ role: "user", text });
-  messages.push({ role: "rio", text: buildRioReply(text, auth.user) });
-  auth.user.messages = messages;
-
-  await saveStore(auth.store);
-  sendJson(response, 201, { messages: auth.user.messages });
+  sendJson(response, 201, { messages });
 }
 
-async function serveStaticAsset(request, response, pathname) {
+async function serveStaticAsset(response, pathname) {
   const fileName = STATIC_FILES[pathname];
 
   if (!fileName) {
@@ -526,13 +734,16 @@ async function serveStaticAsset(request, response, pathname) {
 
   const filePath = path.join(ROOT_DIR, fileName);
   const extension = path.extname(filePath);
-  const content = await fs.readFile(filePath);
+  const content = await fsPromises.readFile(filePath);
 
   response.writeHead(200, {
     "Content-Type": CONTENT_TYPES[extension] || "application/octet-stream",
   });
   response.end(content);
 }
+
+openDatabase();
+migrateLegacyStore();
 
 const server = http.createServer(async (request, response) => {
   try {
@@ -592,7 +803,7 @@ const server = http.createServer(async (request, response) => {
     }
 
     if (request.method === "GET" && STATIC_FILES[pathname]) {
-      await serveStaticAsset(request, response, pathname);
+      await serveStaticAsset(response, pathname);
       return;
     }
 

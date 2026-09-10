@@ -1,2 +1,4 @@
 node_modules/
 data/palaco-store.json
+data/palaco.db
+data/palaco.db-*

@@ -63,7 +63,9 @@ The current build uses a small Node server to:
 - sync the repository catalog from GitHub
 - fall back to a local repository catalog when live sync is unavailable
 
-Saved application data is written locally to `/home/runner/work/PALACO-INDUSTRIE/PALACO-INDUSTRIE/data/palaco-store.json`.
+Saved application data is written locally to the SQLite database at `/home/runner/work/PALACO-INDUSTRIE/PALACO-INDUSTRIE/data/palaco.db`.
+
+If an older `/home/runner/work/PALACO-INDUSTRIE/PALACO-INDUSTRIE/data/palaco-store.json` file is present, the server migrates its account, Citadel, and RIO data into SQLite on startup.
 
 The current repository-world catalog includes:
 
@@ -81,4 +83,4 @@ Optional environment variables:
 
 When GitHub sync is unavailable, the interface falls back to the built-in PALACO repository catalog so the application remains usable.
 
-This build still does not include a production database, shared multi-user spaces, or advanced world-building features.
+This build now uses SQLite for persistence, but it still does not include a managed production database, shared multi-user spaces, or advanced world-building features.
