@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PALACO-INDUSTRIE</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to content</a>
+    <header class="hero">
+      <div class="hero__content">
+        <p class="eyebrow">Future Internet Era (F.I.E.)</p>
+        <h1>Build your own Citadel inside PALACO'S WORLD.</h1>
+        <p class="hero__lead">
+          A first PALACO experience with a clear interface, a personal Citadel,
+          the RIO chatbox, and the L.O.G.O. browser.
+        </p>
+        <div class="hero__actions">
+          <a class="button button--primary" href="#citadel-builder">Create your Citadel</a>
+          <a class="button button--secondary" href="#logo-browser">Open L.O.G.O.</a>
+        </div>
+      </div>
+    </header>
+
+    <main id="main-content" class="layout">
+      <section class="panel panel--intro" aria-labelledby="welcome-title">
+        <div>
+          <h2 id="welcome-title">Welcome to PALACO</h2>
+          <p>
+            PALACO is designed for everyone. This first version focuses on one
+            simple promise: enter, shape your own space, communicate, and
+            explore.
+          </p>
+        </div>
+        <ul class="feature-list" aria-label="Core PALACO features">
+          <li>Your personal Citadel</li>
+          <li>RIO chatbox support</li>
+          <li>L.O.G.O. guided browsing</li>
+          <li>Accessible, easy-to-understand design</li>
+        </ul>
+      </section>
+
+      <section
+        id="citadel-builder"
+        class="panel panel--split"
+        aria-labelledby="citadel-title"
+      >
+        <div>
+          <h2 id="citadel-title">Create your Citadel</h2>
+          <p class="section-copy">
+            Start by creating one personal Citadel. Keep it simple: choose a
+            name, a mood, and a short description.
+          </p>
+
+          <form id="citadel-form" class="stack" novalidate>
+            <label class="field">
+              <span>Your name</span>
+              <input
+                id="ownerName"
+                name="ownerName"
+                type="text"
+                maxlength="60"
+                placeholder="Example: Alex"
+                required
+              />
+            </label>
+
+            <label class="field">
+              <span>Citadel name</span>
+              <input
+                id="citadelName"
+                name="citadelName"
+                type="text"
+                maxlength="80"
+                placeholder="Example: Aurora Citadel"
+                required
+              />
+            </label>
+
+            <label class="field">
+              <span>Theme</span>
+              <select id="citadelTheme" name="citadelTheme">
+                <option value="light">Light</option>
+                <option value="sunrise">Sunrise</option>
+                <option value="forest">Forest</option>
+                <option value="midnight">Midnight</option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span>Short description</span>
+              <textarea
+                id="citadelDescription"
+                name="citadelDescription"
+                rows="4"
+                maxlength="220"
+                placeholder="Describe what this Citadel should feel like."
+              ></textarea>
+            </label>
+
+            <div class="button-row">
+              <button class="button button--primary" type="submit">Save my Citadel</button>
+              <button class="button button--ghost" type="button" id="reset-citadel">
+                Reset
+              </button>
+            </div>
+            <p id="citadel-status" class="status-message" aria-live="polite"></p>
+          </form>
+        </div>
+
+        <aside class="citadel-card" aria-labelledby="citadel-preview-title">
+          <p class="eyebrow">Preview</p>
+          <h3 id="citadel-preview-title">Your Citadel</h3>
+          <p class="citadel-card__owner" id="citadel-owner-preview">Created for you.</p>
+          <div class="citadel-theme" id="citadel-theme-preview">Light</div>
+          <p class="citadel-card__name" id="citadel-name-preview">No Citadel created yet</p>
+          <p class="citadel-card__description" id="citadel-description-preview">
+            Save your first Citadel to see it appear here.
+          </p>
+        </aside>
+      </section>
+
+      <section id="rio-chat" class="panel panel--split" aria-labelledby="rio-title">
+        <div>
+          <h2 id="rio-title">RIO chatbox</h2>
+          <p class="section-copy">
+            RIO welcomes users with calm, direct language. This prototype keeps
+            your conversation in your browser only.
+          </p>
+          <div id="rio-messages" class="chatbox" aria-live="polite" aria-label="RIO chat messages"></div>
+          <form id="rio-form" class="chat-form">
+            <label class="field field--grow">
+              <span>Your message</span>
+              <input
+                id="rio-input"
+                name="rio-input"
+                type="text"
+                maxlength="200"
+                placeholder="Ask RIO for help with your Citadel."
+                required
+              />
+            </label>
+            <button class="button button--primary" type="submit">Send</button>
+          </form>
+        </div>
+
+        <aside class="panel panel--nested">
+          <h3>What RIO can do in this first build</h3>
+          <ul class="feature-list">
+            <li>Greet the user</li>
+            <li>React to questions about the Citadel</li>
+            <li>Encourage simple next steps</li>
+            <li>Store conversation locally in the browser</li>
+          </ul>
+        </aside>
+      </section>
+
+      <section id="logo-browser" class="panel" aria-labelledby="logo-title">
+        <h2 id="logo-title">L.O.G.O. browser</h2>
+        <p class="section-copy">
+          L.O.G.O. opens guided destinations inside PALACO. This first build
+          uses safe, curated pages so the experience stays clear and friendly.
+        </p>
+
+        <div class="browser">
+          <div class="browser__toolbar" role="toolbar" aria-label="Browser controls">
+            <button class="button button--ghost" type="button" id="logo-back">Back</button>
+            <button class="button button--ghost" type="button" id="logo-forward">Forward</button>
+            <button class="button button--ghost" type="button" id="logo-refresh">Refresh</button>
+            <label class="field field--grow field--compact">
+              <span>Destination</span>
+              <select id="logo-destination"></select>
+            </label>
+            <button class="button button--primary" type="button" id="logo-open">Open</button>
+          </div>
+          <p class="browser__address" id="logo-address" aria-live="polite"></p>
+          <iframe
+            id="logo-frame"
+            title="L.O.G.O. browser preview"
+            class="browser__frame"
+          ></iframe>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>PALACO-INDUSTRIE · First-version prototype for the Future Internet Era.</p>
+    </footer>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

@@ -30,3 +30,18 @@ The project should be guided by these core principles:
 ## Current Repository Status
 
 This repository is currently at the concept stage. The next step is to translate this vision into a first concrete product scope, technical architecture, and implementation roadmap.
+
+## First Build
+
+The repository now includes a first static PALACO prototype with:
+
+- a landing experience for the F.I.E. vision
+- a personal Citadel setup flow
+- a browser-based **RIO** chatbox prototype
+- a guided **L.O.G.O.** browser area with curated destinations
+
+## Local Usage
+
+Open `/home/runner/work/PALACO-INDUSTRIE/PALACO-INDUSTRIE/index.html` in a browser to use the prototype locally.
+
+The current build stores Citadel data and RIO chat history in the browser only. It does not yet include accounts, a backend, or shared multi-user functionality.
