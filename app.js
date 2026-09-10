@@ -125,7 +125,8 @@ function setCitadel(citadel) {
 }
 
 function getMessages() {
-  return readStorage(STORAGE_KEYS.messages, defaultMessages);
+  const messages = readStorage(STORAGE_KEYS.messages, defaultMessages);
+  return Array.isArray(messages) ? messages.map((message) => ({ ...message })) : [...defaultMessages];
 }
 
 function setMessages(messages) {
