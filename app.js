@@ -1,7 +1,3 @@
-const STORAGE_KEYS = {
-  token: "palaco-auth-token",
-};
-
 const defaultCitadel = {
   ownerName: "",
   citadelName: "",
@@ -71,7 +67,6 @@ const logoPages = {
 };
 
 const state = {
-  token: readToken(),
   user: null,
   citadel: { ...defaultCitadel },
   messages: [...defaultMessages],
@@ -105,19 +100,6 @@ const repoList = document.getElementById("repo-list");
 const repoCount = document.getElementById("repo-count");
 const repoRefreshButton = document.getElementById("repo-refresh");
 
-function readToken() {
-  return window.localStorage.getItem(STORAGE_KEYS.token) || "";
-}
-
-function writeToken(token) {
-  if (token) {
-    window.localStorage.setItem(STORAGE_KEYS.token, token);
-    return;
-  }
-
-  window.localStorage.removeItem(STORAGE_KEYS.token);
-}
-
 function escapeHtml(value) {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -137,14 +119,11 @@ async function requestJson(path, options = {}) {
     ...(options.headers || {}),
   };
 
-  if (options.auth !== false && state.token) {
-    headers.Authorization = "Bearer " + state.token;
-  }
-
   const response = await fetch(path, {
     method: options.method || "GET",
     headers,
     body: options.body ? JSON.stringify(options.body) : undefined,
+    credentials: "same-origin",
   });
 
   const payload = await response.json().catch(() => ({}));
@@ -364,11 +343,6 @@ function renderLogoPage(pageKey, replace = true) {
 }
 
 function applySignedInState(payload, successMessage) {
-  if (payload.token) {
-    state.token = payload.token;
-    writeToken(payload.token);
-  }
-
   state.user = payload.user;
   state.citadel = payload.citadel || { ...defaultCitadel, ownerName: payload.user.name };
   state.messages = Array.isArray(payload.messages) ? payload.messages : [...defaultMessages];
@@ -381,11 +355,9 @@ function applySignedInState(payload, successMessage) {
 }
 
 function clearSession(message = "Create an account or sign in to unlock saved progress.") {
-  state.token = "";
   state.user = null;
   state.citadel = { ...defaultCitadel };
   state.messages = [...defaultMessages];
-  writeToken("");
   renderAccount(null);
   renderCitadel();
   renderMessages();
@@ -395,11 +367,6 @@ function clearSession(message = "Create an account or sign in to unlock saved pr
 }
 
 async function restoreSession() {
-  if (!state.token) {
-    clearSession();
-    return;
-  }
-
   try {
     const session = await requestJson("/api/auth/session");
     const [citadel, messages] = await Promise.all([

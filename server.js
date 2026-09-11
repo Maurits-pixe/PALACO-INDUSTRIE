@@ -10,6 +10,7 @@ const PORT = Number(process.env.PORT || 3000);
 const GITHUB_OWNER = process.env.GITHUB_OWNER || "Maurits-pixe";
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || "";
 const SESSION_TTL_DAYS = Number(process.env.SESSION_TTL_DAYS || 30);
+const SESSION_COOKIE_NAME = "palaco_session";
 const ROOT_DIR = __dirname;
 const DATA_DIR = path.join(ROOT_DIR, "data");
 const DATABASE_PATH = path.join(DATA_DIR, "palaco.db");
@@ -66,6 +67,15 @@ function sendJson(response, statusCode, payload) {
   response.writeHead(statusCode, {
     "Content-Type": CONTENT_TYPES[".json"],
     "Cache-Control": "no-store",
+  });
+  response.end(JSON.stringify(payload));
+}
+
+function sendJsonWithHeaders(response, statusCode, payload, headers) {
+  response.writeHead(statusCode, {
+    "Content-Type": CONTENT_TYPES[".json"],
+    "Cache-Control": "no-store",
+    ...headers,
   });
   response.end(JSON.stringify(payload));
 }
@@ -208,7 +218,7 @@ function openDatabase() {
     );
 
     CREATE TABLE IF NOT EXISTS sessions (
-      token TEXT PRIMARY KEY,
+      token_hash TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
       created_at TEXT NOT NULL,
       last_seen_at TEXT NOT NULL,
@@ -242,6 +252,54 @@ function nowIso() {
 
 function buildSessionExpiry() {
   return new Date(Date.now() + SESSION_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString();
+}
+
+function sessionMaxAgeSeconds() {
+  return Math.max(1, Math.floor(SESSION_TTL_DAYS * 24 * 60 * 60));
+}
+
+function hashSessionToken(token) {
+  return crypto.createHash("sha256").update(String(token)).digest("hex");
+}
+
+function parseCookies(request) {
+  const raw = request.headers.cookie || "";
+  const cookies = {};
+
+  for (const part of raw.split(";")) {
+    const trimmed = part.trim();
+
+    if (!trimmed) {
+      continue;
+    }
+
+    const separatorIndex = trimmed.indexOf("=");
+    const key = separatorIndex >= 0 ? trimmed.slice(0, separatorIndex) : trimmed;
+    const value = separatorIndex >= 0 ? trimmed.slice(separatorIndex + 1) : "";
+    cookies[key] = decodeURIComponent(value);
+  }
+
+  return cookies;
+}
+
+function buildSessionCookie(token) {
+  return [
+    `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}`,
+    "HttpOnly",
+    "Path=/",
+    "SameSite=Strict",
+    `Max-Age=${sessionMaxAgeSeconds()}`,
+  ].join("; ");
+}
+
+function clearSessionCookie() {
+  return [
+    `${SESSION_COOKIE_NAME}=`,
+    "HttpOnly",
+    "Path=/",
+    "SameSite=Strict",
+    "Max-Age=0",
+  ].join("; ");
 }
 
 function getUserById(userId) {
@@ -307,6 +365,50 @@ function ensureMessagesForUser(user) {
   return getMessagesByUserId(user.id);
 }
 
+function ensureSessionSchema() {
+  const columns = database.prepare("PRAGMA table_info(sessions)").all();
+  const hasTokenHash = columns.some((column) => column.name === "token_hash");
+  const hasToken = columns.some((column) => column.name === "token");
+
+  if (hasTokenHash || !hasToken) {
+    return;
+  }
+
+  const legacySessions = database
+    .prepare("SELECT token, user_id, created_at, last_seen_at, expires_at FROM sessions")
+    .all();
+
+  runInTransaction(() => {
+    database.exec("ALTER TABLE sessions RENAME TO sessions_legacy");
+    database.exec(`
+      CREATE TABLE sessions (
+        token_hash TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )
+    `);
+
+    const insert = database.prepare(
+      "INSERT INTO sessions (token_hash, user_id, created_at, last_seen_at, expires_at) VALUES (?, ?, ?, ?, ?)"
+    );
+
+    for (const session of legacySessions) {
+      insert.run(
+        hashSessionToken(session.token),
+        session.user_id,
+        session.created_at,
+        session.last_seen_at,
+        session.expires_at
+      );
+    }
+
+    database.exec("DROP TABLE sessions_legacy");
+  });
+}
+
 function createUserRecord({ name, email, language, passwordHash }) {
   const user = {
     id: crypto.randomUUID(),
@@ -366,7 +468,7 @@ function saveCitadelForUser(user, citadel) {
 }
 
 function deleteSession(token) {
-  database.prepare("DELETE FROM sessions WHERE token = ?").run(token);
+  database.prepare("DELETE FROM sessions WHERE token_hash = ?").run(hashSessionToken(token));
 }
 
 function cleanupExpiredSessions() {
@@ -379,9 +481,9 @@ function persistSession(userId) {
 
   database
     .prepare(
-      "INSERT INTO sessions (token, user_id, created_at, last_seen_at, expires_at) VALUES (?, ?, ?, ?, ?)"
+      "INSERT INTO sessions (token_hash, user_id, created_at, last_seen_at, expires_at) VALUES (?, ?, ?, ?, ?)"
     )
-    .run(token, userId, createdAt, createdAt, buildSessionExpiry());
+    .run(hashSessionToken(token), userId, createdAt, createdAt, buildSessionExpiry());
 
   return token;
 }
@@ -390,18 +492,18 @@ function getSessionRecord(token) {
   return (
     database
       .prepare(
-        `SELECT token, user_id, created_at, last_seen_at, expires_at
+        `SELECT token_hash, user_id, created_at, last_seen_at, expires_at
          FROM sessions
-         WHERE token = ?`
+         WHERE token_hash = ?`
       )
-      .get(token) || null
+      .get(hashSessionToken(token)) || null
   );
 }
 
 function touchSession(token) {
   database
-    .prepare("UPDATE sessions SET last_seen_at = ?, expires_at = ? WHERE token = ?")
-    .run(nowIso(), buildSessionExpiry(), token);
+    .prepare("UPDATE sessions SET last_seen_at = ?, expires_at = ? WHERE token_hash = ?")
+    .run(nowIso(), buildSessionExpiry(), hashSessionToken(token));
 }
 
 function appendConversation(user, userMessage, rioMessage) {
@@ -567,6 +669,12 @@ function createSession(userId) {
 }
 
 function getSessionToken(request) {
+  const cookies = parseCookies(request);
+
+  if (cookies[SESSION_COOKIE_NAME]) {
+    return cookies[SESSION_COOKIE_NAME];
+  }
+
   const header = request.headers.authorization || "";
   return header.startsWith("Bearer ") ? header.slice(7) : "";
 }
@@ -667,12 +775,16 @@ async function handleSignup(request, response) {
   });
   const token = createSession(user.id);
 
-  sendJson(response, 201, {
-    token,
-    user: buildPublicUser(user),
-    citadel: buildCitadel(user, getCitadelRowByUserId(user.id)),
-    messages: getMessagesByUserId(user.id),
-  });
+  sendJsonWithHeaders(
+    response,
+    201,
+    {
+      user: buildPublicUser(user),
+      citadel: buildCitadel(user, getCitadelRowByUserId(user.id)),
+      messages: getMessagesByUserId(user.id),
+    },
+    { "Set-Cookie": buildSessionCookie(token) }
+  );
 }
 
 async function handleLogin(request, response) {
@@ -693,12 +805,16 @@ async function handleLogin(request, response) {
   }
 
   const token = createSession(user.id);
-  sendJson(response, 200, {
-    token,
-    user: buildPublicUser(user),
-    citadel: buildCitadel(user, getCitadelRowByUserId(user.id)),
-    messages: ensureMessagesForUser(user),
-  });
+  sendJsonWithHeaders(
+    response,
+    200,
+    {
+      user: buildPublicUser(user),
+      citadel: buildCitadel(user, getCitadelRowByUserId(user.id)),
+      messages: ensureMessagesForUser(user),
+    },
+    { "Set-Cookie": buildSessionCookie(token) }
+  );
 }
 
 async function handleSession(request, response) {
@@ -719,7 +835,7 @@ function handleLogout(request, response) {
     deleteSession(token);
   }
 
-  sendJson(response, 200, { ok: true });
+  sendJsonWithHeaders(response, 200, { ok: true }, { "Set-Cookie": clearSessionCookie() });
 }
 
 async function handleGetCitadel(request, response) {
@@ -814,6 +930,7 @@ async function serveStaticAsset(response, pathname) {
 }
 
 openDatabase();
+ensureSessionSchema();
 migrateLegacyStore();
 cleanupExpiredSessions();
 

@@ -85,4 +85,8 @@ Optional environment variables:
 
 When GitHub sync is unavailable, the interface falls back to the built-in PALACO repository catalog so the application remains usable.
 
+## Authentication
+
+The app now uses an httpOnly session cookie for browser authentication. Session tokens are stored hashed in SQLite and are not kept in browser localStorage.
+
 This build now uses SQLite for persistence, including persisted sign-in sessions, but it still does not include a managed production database, shared multi-user spaces, or advanced world-building features.
