@@ -87,6 +87,6 @@ When GitHub sync is unavailable, the interface falls back to the built-in PALACO
 
 ## Authentication
 
-The app now uses an httpOnly session cookie for browser authentication. Session tokens are stored hashed in SQLite and are not kept in browser localStorage.
+The app now uses an httpOnly session cookie for browser authentication. Session tokens are stored hashed in SQLite and are not kept in browser localStorage. Authenticated write requests also require a session-bound CSRF token supplied by the frontend.
 
 This build now uses SQLite for persistence, including persisted sign-in sessions, but it still does not include a managed production database, shared multi-user spaces, or advanced world-building features.

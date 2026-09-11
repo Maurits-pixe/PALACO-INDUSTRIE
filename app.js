@@ -68,6 +68,7 @@ const logoPages = {
 
 const state = {
   user: null,
+  csrfToken: "",
   citadel: { ...defaultCitadel },
   messages: [...defaultMessages],
   repositories: [],
@@ -118,6 +119,10 @@ async function requestJson(path, options = {}) {
     "Content-Type": "application/json",
     ...(options.headers || {}),
   };
+
+  if (!["GET", "HEAD"].includes((options.method || "GET").toUpperCase()) && state.csrfToken) {
+    headers["X-CSRF-Token"] = state.csrfToken;
+  }
 
   const response = await fetch(path, {
     method: options.method || "GET",
@@ -344,6 +349,7 @@ function renderLogoPage(pageKey, replace = true) {
 
 function applySignedInState(payload, successMessage) {
   state.user = payload.user;
+  state.csrfToken = payload.csrfToken || state.csrfToken;
   state.citadel = payload.citadel || { ...defaultCitadel, ownerName: payload.user.name };
   state.messages = Array.isArray(payload.messages) ? payload.messages : [...defaultMessages];
   renderAccount(state.user);
@@ -356,6 +362,7 @@ function applySignedInState(payload, successMessage) {
 
 function clearSession(message = "Create an account or sign in to unlock saved progress.") {
   state.user = null;
+  state.csrfToken = "";
   state.citadel = { ...defaultCitadel };
   state.messages = [...defaultMessages];
   renderAccount(null);

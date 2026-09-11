@@ -220,6 +220,7 @@ function openDatabase() {
     CREATE TABLE IF NOT EXISTS sessions (
       token_hash TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
+      csrf_token TEXT NOT NULL,
       created_at TEXT NOT NULL,
       last_seen_at TEXT NOT NULL,
       expires_at TEXT NOT NULL,
@@ -252,6 +253,10 @@ function nowIso() {
 
 function buildSessionExpiry() {
   return new Date(Date.now() + SESSION_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString();
+}
+
+function createCsrfToken() {
+  return crypto.randomBytes(24).toString("hex");
 }
 
 function sessionMaxAgeSeconds() {
@@ -369,44 +374,60 @@ function ensureSessionSchema() {
   const columns = database.prepare("PRAGMA table_info(sessions)").all();
   const hasTokenHash = columns.some((column) => column.name === "token_hash");
   const hasToken = columns.some((column) => column.name === "token");
+  const hasCsrfToken = columns.some((column) => column.name === "csrf_token");
 
-  if (hasTokenHash || !hasToken) {
+  if (hasToken) {
+    const legacySessions = database
+      .prepare("SELECT token, user_id, created_at, last_seen_at, expires_at FROM sessions")
+      .all();
+
+    runInTransaction(() => {
+      database.exec("ALTER TABLE sessions RENAME TO sessions_legacy");
+      database.exec(`
+        CREATE TABLE sessions (
+          token_hash TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          csrf_token TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          last_seen_at TEXT NOT NULL,
+          expires_at TEXT NOT NULL,
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+      `);
+
+      const insert = database.prepare(
+        "INSERT INTO sessions (token_hash, user_id, csrf_token, created_at, last_seen_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)"
+      );
+
+      for (const session of legacySessions) {
+        insert.run(
+          hashSessionToken(session.token),
+          session.user_id,
+          createCsrfToken(),
+          session.created_at,
+          session.last_seen_at,
+          session.expires_at
+        );
+      }
+
+      database.exec("DROP TABLE sessions_legacy");
+    });
     return;
   }
 
-  const legacySessions = database
-    .prepare("SELECT token, user_id, created_at, last_seen_at, expires_at FROM sessions")
-    .all();
+  if (!hasCsrfToken) {
+    runInTransaction(() => {
+      database.exec("ALTER TABLE sessions ADD COLUMN csrf_token TEXT");
+      const rows = database
+        .prepare("SELECT token_hash FROM sessions WHERE csrf_token IS NULL OR csrf_token = ''")
+        .all();
+      const update = database.prepare("UPDATE sessions SET csrf_token = ? WHERE token_hash = ?");
 
-  runInTransaction(() => {
-    database.exec("ALTER TABLE sessions RENAME TO sessions_legacy");
-    database.exec(`
-      CREATE TABLE sessions (
-        token_hash TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        last_seen_at TEXT NOT NULL,
-        expires_at TEXT NOT NULL,
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-      )
-    `);
-
-    const insert = database.prepare(
-      "INSERT INTO sessions (token_hash, user_id, created_at, last_seen_at, expires_at) VALUES (?, ?, ?, ?, ?)"
-    );
-
-    for (const session of legacySessions) {
-      insert.run(
-        hashSessionToken(session.token),
-        session.user_id,
-        session.created_at,
-        session.last_seen_at,
-        session.expires_at
-      );
-    }
-
-    database.exec("DROP TABLE sessions_legacy");
-  });
+      for (const row of rows) {
+        update.run(createCsrfToken(), row.token_hash);
+      }
+    });
+  }
 }
 
 function createUserRecord({ name, email, language, passwordHash }) {
@@ -478,21 +499,22 @@ function cleanupExpiredSessions() {
 function persistSession(userId) {
   const token = crypto.randomBytes(24).toString("hex");
   const createdAt = nowIso();
+  const csrfToken = createCsrfToken();
 
   database
     .prepare(
-      "INSERT INTO sessions (token_hash, user_id, created_at, last_seen_at, expires_at) VALUES (?, ?, ?, ?, ?)"
+      "INSERT INTO sessions (token_hash, user_id, csrf_token, created_at, last_seen_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)"
     )
-    .run(hashSessionToken(token), userId, createdAt, createdAt, buildSessionExpiry());
+    .run(hashSessionToken(token), userId, csrfToken, createdAt, createdAt, buildSessionExpiry());
 
-  return token;
+  return { token, csrfToken };
 }
 
 function getSessionRecord(token) {
   return (
     database
       .prepare(
-        `SELECT token_hash, user_id, created_at, last_seen_at, expires_at
+        `SELECT token_hash, user_id, csrf_token, created_at, last_seen_at, expires_at
          FROM sessions
          WHERE token_hash = ?`
       )
@@ -668,6 +690,11 @@ function createSession(userId) {
   return persistSession(userId);
 }
 
+function verifyCsrfToken(request, session) {
+  const headerToken = request.headers["x-csrf-token"];
+  return typeof headerToken === "string" && headerToken === session.csrf_token;
+}
+
 function getSessionToken(request) {
   const cookies = parseCookies(request);
 
@@ -701,7 +728,7 @@ function getAuthenticatedUser(request) {
   }
 
   touchSession(token);
-  return { token, user };
+  return { token, user, session: getSessionRecord(token) };
 }
 
 async function hashPassword(password) {
@@ -773,7 +800,7 @@ async function handleSignup(request, response) {
     language,
     passwordHash: await hashPassword(password),
   });
-  const token = createSession(user.id);
+  const { token, csrfToken } = createSession(user.id);
 
   sendJsonWithHeaders(
     response,
@@ -782,6 +809,7 @@ async function handleSignup(request, response) {
       user: buildPublicUser(user),
       citadel: buildCitadel(user, getCitadelRowByUserId(user.id)),
       messages: getMessagesByUserId(user.id),
+      csrfToken,
     },
     { "Set-Cookie": buildSessionCookie(token) }
   );
@@ -804,7 +832,7 @@ async function handleLogin(request, response) {
     return;
   }
 
-  const token = createSession(user.id);
+  const { token, csrfToken } = createSession(user.id);
   sendJsonWithHeaders(
     response,
     200,
@@ -812,6 +840,7 @@ async function handleLogin(request, response) {
       user: buildPublicUser(user),
       citadel: buildCitadel(user, getCitadelRowByUserId(user.id)),
       messages: ensureMessagesForUser(user),
+      csrfToken,
     },
     { "Set-Cookie": buildSessionCookie(token) }
   );
@@ -825,15 +854,23 @@ async function handleSession(request, response) {
     return;
   }
 
-  sendJson(response, 200, { user: buildPublicUser(auth.user) });
+  sendJson(response, 200, { user: buildPublicUser(auth.user), csrfToken: auth.session.csrf_token });
 }
 
 function handleLogout(request, response) {
-  const token = getSessionToken(request);
+  const auth = getAuthenticatedUser(request);
 
-  if (token) {
-    deleteSession(token);
+  if (!auth) {
+    sendJsonWithHeaders(response, 200, { ok: true }, { "Set-Cookie": clearSessionCookie() });
+    return;
   }
+
+  if (!verifyCsrfToken(request, auth.session)) {
+    sendError(response, 403, "Invalid CSRF token.");
+    return;
+  }
+
+  deleteSession(auth.token);
 
   sendJsonWithHeaders(response, 200, { ok: true }, { "Set-Cookie": clearSessionCookie() });
 }
@@ -856,6 +893,11 @@ async function handleSaveCitadel(request, response) {
 
   if (!auth) {
     sendError(response, 401, "Sign in to save your Citadel.");
+    return;
+  }
+
+  if (!verifyCsrfToken(request, auth.session)) {
+    sendError(response, 403, "Invalid CSRF token.");
     return;
   }
 
@@ -893,6 +935,11 @@ async function handlePostMessage(request, response) {
 
   if (!auth) {
     sendError(response, 401, "Sign in to talk with RIO.");
+    return;
+  }
+
+  if (!verifyCsrfToken(request, auth.session)) {
+    sendError(response, 403, "Invalid CSRF token.");
     return;
   }
 
