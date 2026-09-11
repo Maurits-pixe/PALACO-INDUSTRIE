@@ -1,0 +1,62 @@
+# 1) Zorg dat je op de juiste branch zit
+git checkout setup/initial-structure
+git pull --ff-only
+
+# 2) Maak staging
+mkdir -p .staging/foundation
+
+# 3) Pak ZIP uit naar staging (PowerShell)
+Expand-Archive -LiteralPath "C:\Users\mauri\Downloads\PALACO_Foundation_v0.3.0_alpha.zip" -DestinationPath ".staging/foundation" -Force
+
+# 4) Kopieer ALLEEN wat onder setup/initial-structure hoort
+# (pas bronpad aan als de zip een topfolder heeft)
+# voorbeeld met robocopy:
+robocopy ".staging\foundation\setup\initial-structure" ".\setup\initial-structure" /E
+
+# 5) Controleer wat je staged (moet alleen setup/initial-structure zijn)
+git add setup/initial-structure
+git status
+git diff --name-only --cached
+
+git fetch origin
+git checkout setup/initial-structure || git checkout -b setup/initial-structure
+git pull --ff-only
+
+# veiligheidstag op huidige staat
+git tag -a safety-pre-bootstrap-2026-09-08 -m "Safety checkpoint before foundation bootstrap"
+git push origin safety-pre-bootstrap-2026-09-08
+
+git grep -nE "(API_KEY|SECRET|TOKEN|PASSWORD|PRIVATE_KEY)"
+
+git status
+git diff --name-only --cached
+
+git add <module A>
+git commit -m "feat(foundation): add module A baseline"
+
+git add <module B>
+git commit -m "feat(foundation): add module B baseline"
+
+git push
+
+git add <tooling + .github/workflows/*>
+git commit -m "bootstrap(foundation): tooling and CI baseline"
+git push
+
+git add <alleen structuurbestanden>
+git commit -m "bootstrap(foundation): initial skeleton from v0.3.0-alpha"
+git push
+
+mkdir -p .staging/foundation
+# unzip handmatig of via tool naar .staging/foundation
+
+git tag -a bootstrap-anchor-5bec432 -m "Post-403 anchor before Foundation bootstrap"
+git push origin bootstrap-anchor-5bec432
+
+git branch --show-current
+
+git fetch origin
+git checkout -b setup/initial-structure
+git add .
+git commit -m "setup: initial structure bootstrap"
+git push -u origin setup/initial-structure
