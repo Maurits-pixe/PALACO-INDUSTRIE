@@ -1,0 +1,29 @@
+git add "∆ GO-6 — PALACO.NL FULL WEBSITE" "∆ GO-7 — DIGITAL IDENTITY"
+git commit -m "Add GO-6 website canon and GO-7 digital identity canon"
+git push
+
+## PALACO.NL Canon (PVD / PID)
+
+Deze repository volgt de canonieke specificaties:
+
+- [∆ GO-6 — PALACO.NL FULL WEBSITE](./∆%20GO-6%20—%20PALACO.NL%20FULL%20WEBSITE)
+- [∆ GO-7 — DIGITAL IDENTITY](./∆%20GO-7%20—%20DIGITAL%20IDENTITY)
+
+### Scope
+
+- **GO-6 (PVD-001 v1.0):** volledige publieke website-architectuur voor PALACO.NL  
+  (informatie-architectuur, navigatie, states, accessibility, trust/security UX, component- en datamodel).
+- **GO-7 (PID-001 v1.0):** geïntegreerd identity-systeem  
+  (digital identity UX/UI + technisch protocol + fysieke premium card, met proof-first boundaries).
+
+### Canonical principles
+
+- Presentation ≠ permission  
+- Verify before trust  
+- Status must be explicit  
+- Provenance must be inspectable  
+- Authority remains constitutionally bounded
+
+git add README.md
+git commit -m "docs: add GO-6 and GO-7 canonical references"
+git push
