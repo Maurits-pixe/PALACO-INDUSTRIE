@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PALACO-INDUSTRIE</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to content</a>
+    <header class="hero">
+      <div class="hero__content">
+        <p class="eyebrow">Future Internet Era (F.I.E.)</p>
+        <h1>Build your own Citadel inside PALACO'S WORLD.</h1>
+        <p class="hero__lead">
+          A first PALACO experience with a clear interface, a personal Citadel,
+          the RIO chatbox, and the L.O.G.O. browser.
+        </p>
+        <div class="hero__actions">
+          <a class="button button--primary" href="#citadel-builder">Create your Citadel</a>
+          <a class="button button--secondary" href="#logo-browser">Open L.O.G.O.</a>
+        </div>
+      </div>
+    </header>
+
+    <main id="main-content" class="layout">
+      <section class="panel panel--intro" aria-labelledby="welcome-title">
+        <div>
+          <h2 id="welcome-title">Welcome to PALACO</h2>
+          <p>
+            PALACO is designed for everyone. This first version focuses on one
+            simple promise: enter, shape your own space, communicate, and
+            explore.
+          </p>
+        </div>
+        <ul class="feature-list" aria-label="Core PALACO features">
+          <li>Your personal Citadel</li>
+          <li>RIO chatbox support</li>
+          <li>L.O.G.O. guided browsing</li>
+          <li>Accessible, easy-to-understand design</li>
+        </ul>
+      </section>
+
+      <section id="account-access" class="panel panel--split" aria-labelledby="account-title">
+        <div>
+          <h2 id="account-title">Create an account or sign in</h2>
+          <p class="section-copy">
+            This version now saves your Citadel and RIO history on the server.
+            Start with a simple PALACO account.
+          </p>
+
+          <div class="auth-grid">
+            <form id="signup-form" class="panel panel--nested stack" novalidate>
+              <h3>Create account</h3>
+              <label class="field">
+                <span>Name</span>
+                <input id="signup-name" name="name" type="text" maxlength="60" required />
+              </label>
+              <label class="field">
+                <span>Email</span>
+                <input id="signup-email" name="email" type="email" maxlength="120" required />
+              </label>
+              <label class="field">
+                <span>Password</span>
+                <input
+                  id="signup-password"
+                  name="password"
+                  type="password"
+                  minlength="8"
+                  maxlength="120"
+                  required
+                />
+              </label>
+              <label class="field">
+                <span>Preferred language</span>
+                <select id="signup-language" name="language">
+                  <option value="English">English</option>
+                  <option value="Nederlands">Nederlands</option>
+                </select>
+              </label>
+              <button class="button button--primary" type="submit">Create account</button>
+              <p id="signup-status" class="status-message" aria-live="polite"></p>
+            </form>
+
+            <form id="login-form" class="panel panel--nested stack" novalidate>
+              <h3>Sign in</h3>
+              <label class="field">
+                <span>Email</span>
+                <input id="login-email" name="email" type="email" maxlength="120" required />
+              </label>
+              <label class="field">
+                <span>Password</span>
+                <input
+                  id="login-password"
+                  name="password"
+                  type="password"
+                  minlength="8"
+                  maxlength="120"
+                  required
+                />
+              </label>
+              <button class="button button--secondary" type="submit">Sign in</button>
+              <p id="login-status" class="status-message" aria-live="polite"></p>
+            </form>
+          </div>
+        </div>
+
+        <aside class="panel panel--nested account-card" aria-labelledby="account-summary-title">
+          <p class="eyebrow">Account status</p>
+          <h3 id="account-summary-title">Your PALACO account</h3>
+          <p class="account-card__name" id="account-name">Not signed in</p>
+          <p class="account-card__meta" id="account-email">
+            Create an account to save your Citadel and RIO history.
+          </p>
+          <p class="account-card__meta" id="account-language">Preferred language: -</p>
+          <div class="button-row">
+            <button class="button button--ghost" type="button" id="signout-button" disabled>
+              Sign out
+            </button>
+          </div>
+          <p id="session-status" class="status-message" aria-live="polite">
+            Create an account or sign in to unlock saved progress.
+          </p>
+        </aside>
+      </section>
+
+      <section
+        id="citadel-builder"
+        class="panel panel--split"
+        aria-labelledby="citadel-title"
+      >
+        <div>
+          <h2 id="citadel-title">Create your Citadel</h2>
+          <p class="section-copy">
+            Start by creating one personal Citadel. Keep it simple: choose a
+            name, a mood, and a short description. Your saved Citadel belongs to
+            your signed-in account.
+          </p>
+          <p id="citadel-auth-hint" class="notice">
+            Sign in first to save your Citadel on the server.
+          </p>
+
+          <form id="citadel-form" class="stack" novalidate>
+            <label class="field">
+              <span>Your name</span>
+              <input
+                id="ownerName"
+                name="ownerName"
+                type="text"
+                maxlength="60"
+                placeholder="Example: Alex"
+                required
+              />
+            </label>
+
+            <label class="field">
+              <span>Citadel name</span>
+              <input
+                id="citadelName"
+                name="citadelName"
+                type="text"
+                maxlength="80"
+                placeholder="Example: Aurora Citadel"
+                required
+              />
+            </label>
+
+            <label class="field">
+              <span>Theme</span>
+              <select id="citadelTheme" name="citadelTheme">
+                <option value="light">Light</option>
+                <option value="sunrise">Sunrise</option>
+                <option value="forest">Forest</option>
+                <option value="midnight">Midnight</option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span>Short description</span>
+              <textarea
+                id="citadelDescription"
+                name="citadelDescription"
+                rows="4"
+                maxlength="220"
+                placeholder="Describe what this Citadel should feel like."
+              ></textarea>
+            </label>
+
+            <div class="button-row">
+              <button class="button button--primary" type="submit">Save my Citadel</button>
+              <button class="button button--ghost" type="button" id="reset-citadel">
+                Reset
+              </button>
+            </div>
+            <p id="citadel-status" class="status-message" aria-live="polite"></p>
+          </form>
+        </div>
+
+        <aside class="citadel-card" aria-labelledby="citadel-preview-title">
+          <p class="eyebrow">Preview</p>
+          <h3 id="citadel-preview-title">Your Citadel</h3>
+          <p class="citadel-card__owner" id="citadel-owner-preview">Created for you.</p>
+          <div class="citadel-theme" id="citadel-theme-preview">Light</div>
+          <p class="citadel-card__name" id="citadel-name-preview">No Citadel created yet</p>
+          <p class="citadel-card__description" id="citadel-description-preview">
+            Save your first Citadel to see it appear here.
+          </p>
+        </aside>
+      </section>
+
+      <section class="panel" aria-labelledby="repositories-title">
+        <h2 id="repositories-title">PALACO repository worlds</h2>
+        <p class="section-copy">
+          This build now uses your repository network as part of the guided
+          PALACO experience.
+        </p>
+        <div class="repository-toolbar">
+          <p id="repo-count" class="notice">Loading your repositories...</p>
+          <button class="button button--ghost" type="button" id="repo-refresh">
+            Refresh repositories
+          </button>
+        </div>
+        <div id="repo-list" class="repository-list" aria-live="polite"></div>
+      </section>
+
+      <section id="rio-chat" class="panel panel--split" aria-labelledby="rio-title">
+        <div>
+          <h2 id="rio-title">RIO chatbox</h2>
+          <p class="section-copy">
+            RIO welcomes users with calm, direct language. Your messages are now
+            tied to your account and loaded from the server when you return.
+          </p>
+          <p id="rio-auth-hint" class="notice">
+            Sign in to load your saved RIO conversation.
+          </p>
+          <div id="rio-messages" class="chatbox" aria-live="polite" aria-label="RIO chat messages"></div>
+          <form id="rio-form" class="chat-form">
+            <label class="field field--grow">
+              <span>Your message</span>
+              <input
+                id="rio-input"
+                name="rio-input"
+                type="text"
+                maxlength="200"
+                placeholder="Ask RIO for help with your Citadel."
+                required
+              />
+            </label>
+            <button class="button button--primary" type="submit">Send</button>
+          </form>
+        </div>
+
+        <aside class="panel panel--nested">
+          <h3>What RIO can do in this first build</h3>
+          <ul class="feature-list">
+            <li>Greet the signed-in user</li>
+            <li>React to questions about the Citadel</li>
+            <li>Encourage simple next steps</li>
+            <li>Store conversation history on the server</li>
+          </ul>
+        </aside>
+      </section>
+
+      <section id="logo-browser" class="panel" aria-labelledby="logo-title">
+        <h2 id="logo-title">L.O.G.O. browser</h2>
+        <p class="section-copy">
+          L.O.G.O. opens guided destinations inside PALACO. This first build
+          uses safe, curated pages so the experience stays clear and friendly.
+        </p>
+
+        <div class="browser">
+          <div class="browser__toolbar" role="toolbar" aria-label="Browser controls">
+            <button class="button button--ghost" type="button" id="logo-back">Back</button>
+            <button class="button button--ghost" type="button" id="logo-forward">Forward</button>
+            <button class="button button--ghost" type="button" id="logo-refresh">Refresh</button>
+            <label class="field field--grow field--compact">
+              <span>Destination</span>
+              <select id="logo-destination"></select>
+            </label>
+            <button class="button button--primary" type="button" id="logo-open">Open</button>
+          </div>
+          <p class="browser__address" id="logo-address" aria-live="polite"></p>
+          <iframe
+            id="logo-frame"
+            title="L.O.G.O. browser preview"
+            class="browser__frame"
+          ></iframe>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>PALACO-INDUSTRIE · First-version prototype for the Future Internet Era.</p>
+    </footer>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
