@@ -48,7 +48,7 @@ pub trait ExecutionLedgerRepository {
     ) -> Result<(), LedgerRepositoryError>;
 
     /// Atomically claims an idempotency key.
-    fn claim_idempotency(&mut self, idempotency_key: &str) -> Result<(), LedgerRepositoryError>;
+    fn claim_idempotency(&mut self, idempotency_key: &str, execution_id: &str) -> Result<(), LedgerRepositoryError>;
 
     /// Reads the current durable state.
     fn get_current_state(
@@ -62,6 +62,8 @@ pub trait ExecutionLedgerRepository {
     /// Claims one pending outbox signal for dispatch without changing its fact.
     fn claim_outbox_signal(&mut self) -> Result<(), LedgerRepositoryError>;
 }
+
+pub mod adapter;
 
 /// SQL contract for a worker claim.
 ///
