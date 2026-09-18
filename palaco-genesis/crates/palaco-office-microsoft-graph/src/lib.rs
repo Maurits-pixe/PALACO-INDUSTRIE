@@ -237,9 +237,31 @@ mod tests {
     }
 
     #[test]
-    fn request_has_no_invented_payload() -> Result<(), GraphAdapterError> {
+    fn request_integrity_is_self_verifying() -> Result<(), GraphAdapterError> {
         let request = build_request(&event(), "auth-024")?;
-        assert_eq!(request.body, "{}");
+        assert!(verify_request_integrity(&request));
+        Ok(())
+    }
+
+    #[test]
+    fn changed_request_fails_integrity_verification() -> Result<(), GraphAdapterError> {
+        let mut request = build_request(&event(), "auth-024")?;
+        request.body = "{\"tampered\":true}".into();
+        assert!(!verify_request_integrity(&request));
+        Ok(())
+    }
+
+    #[test]
+    fn canonical_task_request_contains_explicit_binding() -> Result<(), GraphAdapterError> {
+        let payload = palaco_office_event_contract::TaskCreatePayload {
+            list_id: "list-027".into(),
+            title: "PALACO".into(),
+            body: Some("GO-027".into()),
+        };
+        let request = build_task_request(&event(), "auth-024", &payload)?;
+        assert_eq!(request.path, "/me/todo/lists/list-027/tasks");
+        assert!(request.body.contains("list-027"));
+        assert!(verify_request_integrity(&request));
         Ok(())
     }
 
