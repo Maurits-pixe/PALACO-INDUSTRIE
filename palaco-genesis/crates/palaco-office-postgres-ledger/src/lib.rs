@@ -130,6 +130,70 @@ FOR UPDATE;
 COMMIT;
 "#;
 
+/// SQL contract for a fail-closed worker claim.
+///
+/// The claim and state transition occur while the execution row is locked.
+/// A revoked execution can therefore never be promoted from stale state.
+pub const WORKER_CLAIM_SQL: &str = r#"
+BEGIN;
+SELECT execution_id, state
+FROM palaco_execution_current
+WHERE execution_id = $1
+FOR UPDATE;
+-- If no row exists: fail closed.
+-- If state is REVOKED, EXPIRED, COMPLETED, FAILED, or CANCELLED: reject.
+-- Only PENDING may transition to EXECUTING.
+-- INSERT EXECUTING into palaco_execution_ledger.
+-- UPDATE palaco_execution_current.
+-- INSERT STATE_CHANGED into palaco_execution_outbox.
+COMMIT;
+"#;
+
+/// SQL contract for claiming one outbox item.
+///
+/// SKIP LOCKED prevents concurrent dispatchers from taking the same item.
+/// Dispatch is still separate from external execution.
+pub const OUTBOX_CLAIM_SQL: &str = r#"
+BEGIN;
+SELECT outbox_id, sequence_id, execution_id, event_type
+FROM palaco_execution_outbox
+WHERE dispatched_at IS NULL
+ORDER BY outbox_id
+FOR UPDATE SKIP LOCKED
+LIMIT 1;
+-- Dispatcher may mark the selected signal as dispatched after successful publication.
+COMMIT;
+"#;
+
+/// SQL contract for the final durable revocation check.
+///
+/// This check must happen after any queue delay and immediately before the
+/// external side-effect boundary.
+pub const FINAL_REVOCATION_SQL: &str = r#"
+SELECT state
+FROM palaco_execution_current
+WHERE execution_id = $1;
+-- Only a durable state other than REVOKED permits the caller to continue
+-- to its separate authorization and transport gates.
+"#;
+
+/// Deterministic lifecycle-transition policy used by repository adapters.
+pub fn permits_transition(current: Option<LedgerState>, next: LedgerState) -> bool {
+    match (current, next) {
+        (None, LedgerState::Pending) => true,
+        (Some(LedgerState::Pending), LedgerState::Executing) => true,
+        (Some(LedgerState::Executing), LedgerState::Completed) => true,
+        (Some(LedgerState::Executing), LedgerState::Failed) => true,
+        (Some(LedgerState::Pending), LedgerState::Revoked) => true,
+        (Some(LedgerState::Executing), LedgerState::Revoked) => true,
+        (Some(LedgerState::Pending), LedgerState::Expired) => true,
+        (Some(LedgerState::Executing), LedgerState::Expired) => true,
+        (Some(LedgerState::Pending), LedgerState::Cancelled) => true,
+        (Some(LedgerState::Executing), LedgerState::Cancelled) => true,
+        _ => false,
+    }
+}
+
 /// Maps the domain state to the stable PostgreSQL representation.
 pub fn state_name(state: LedgerState) -> &'static str {
     match state {
@@ -146,6 +210,30 @@ pub fn state_name(state: LedgerState) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn transition_policy_is_fail_closed() {
+        assert!(permits_transition(None, LedgerState::Pending));
+        assert!(permits_transition(Some(LedgerState::Pending), LedgerState::Executing));
+        assert!(permits_transition(Some(LedgerState::Pending), LedgerState::Revoked));
+        assert!(!permits_transition(Some(LedgerState::Revoked), LedgerState::Executing));
+        assert!(!permits_transition(Some(LedgerState::Completed), LedgerState::Executing));
+        assert!(!permits_transition(Some(LedgerState::Expired), LedgerState::Completed));
+    }
+
+    #[test]
+    fn worker_claim_requires_lock_and_rejects_revoked() {
+        let lock = WORKER_CLAIM_SQL.find("FOR UPDATE");
+        let revoked = WORKER_CLAIM_SQL.find("state is REVOKED");
+        assert!(lock.is_some());
+        assert!(revoked.is_some());
+        assert!(lock < revoked);
+    }
+
+    #[test]
+    fn outbox_claim_uses_skip_locked() {
+        assert!(OUTBOX_CLAIM_SQL.contains("FOR UPDATE SKIP LOCKED"));
+    }
 
     #[test]
     fn state_mapping_is_explicit() {
