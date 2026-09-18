@@ -6,7 +6,6 @@ pub mod signature;
 
 use palaco_office_event_contract::{AuthorizationState, EventEnvelope, ExecutionState};
 use palaco_office_execution_safety::{pre_side_effect_check, ClaimDecision, IdempotencyRegistry, SafetyError};
-use sha2::{Digest, Sha256};
 
 /// HTTP method required by a Microsoft Graph execution request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,21 +48,12 @@ pub struct GraphRequest {
 }
 
 /// Computes the canonical integrity digest for a bounded Graph request.
+///
+/// GO-028 makes the signature encoder the single canonical representation.
+/// The legacy delimiter-based representation is therefore no longer used.
+/// This preserves the rule: what is signed shall be exactly what is verified.
 pub fn request_integrity_hash(request: &GraphRequest) -> String {
-    let canonical = format!(
-        "{:?}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
-        request.method,
-        request.path,
-        request.body,
-        request.event_id,
-        request.trace_id,
-        request.authorization_reference,
-        request.idempotency_key,
-        request.source_ref,
-        request.evidence_ref,
-        request.provenance_reference
-    );
-    Sha256::digest(canonical.as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
+    signature::canonical_request_sha256(request)
 }
 
 /// Verifies that the request has not changed since its integrity hash was created.
