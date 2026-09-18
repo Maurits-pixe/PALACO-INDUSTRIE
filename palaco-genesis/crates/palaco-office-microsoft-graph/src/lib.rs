@@ -1,10 +1,11 @@
-pub mod auth;
-
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod auth;
+
 use palaco_office_event_contract::{AuthorizationState, EventEnvelope, ExecutionState};
 use palaco_office_execution_safety::{pre_side_effect_check, ClaimDecision, IdempotencyRegistry, SafetyError};
+use sha2::{Digest, Sha256};
 
 /// HTTP method required by a Microsoft Graph execution request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,6 +37,28 @@ pub struct GraphRequest {
     pub authorization_reference: String,
     /// Claimed idempotency key.
     pub idempotency_key: String,
+    /// SHA-256 digest of the canonical request fields.
+    pub integrity_hash: String,
+}
+
+/// Computes the canonical integrity digest for a bounded Graph request.
+pub fn request_integrity_hash(request: &GraphRequest) -> String {
+    let canonical = format!(
+        "{:?}|{}|{}|{}|{}|{}|{}",
+        request.method,
+        request.path,
+        request.body,
+        request.event_id,
+        request.trace_id,
+        request.authorization_reference,
+        request.idempotency_key
+    );
+    Sha256::digest(canonical.as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Verifies that the request has not changed since its integrity hash was created.
+pub fn verify_request_integrity(request: &GraphRequest) -> bool {
+    request.integrity_hash == request_integrity_hash(request)
 }
 
 /// Transport boundary for Microsoft Graph.
@@ -117,6 +140,7 @@ pub fn build_request(event: &EventEnvelope, authorization_reference: &str) -> Re
         trace_id: event.trace_id.clone(),
         authorization_reference: authorization_reference.to_string(),
         idempotency_key: event.idempotency_key.clone(),
+        integrity_hash: String::new(),
     })
 }
 
@@ -138,6 +162,7 @@ pub fn build_task_request(
     payload.validate().map_err(GraphAdapterError::InvalidEvent)?;
     request.path = format!("/me/todo/lists/{}/tasks", payload.list_id);
     request.body = payload.canonical_json().map_err(GraphAdapterError::InvalidEvent)?;
+    request.integrity_hash = request_integrity_hash(&request);
     Ok(request)
 }
 
@@ -156,6 +181,7 @@ impl<T: GraphTransport> MicrosoftGraphExecutionAdapter<T> {
             .filter(|value| !value.trim().is_empty())
             .ok_or(GraphAdapterError::AuthorizationReferenceMissing)?;
         let request = build_request(event, authorization_reference)?;
+        if !verify_request_integrity(&request) { return Err(GraphAdapterError::InvalidEvent("request integrity mismatch".into())); }
         let claim = pre_side_effect_check(event, registry).map_err(map_safety_error)?;
         if !matches!(claim, ClaimDecision::Claimed) { return Err(GraphAdapterError::DuplicateIdempotencyKey); }
         let result = self.transport.send(&request)?;
