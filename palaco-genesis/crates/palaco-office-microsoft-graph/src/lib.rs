@@ -174,6 +174,49 @@ pub fn build_task_request(
 /// Concrete orchestration boundary for Microsoft Graph.
 pub struct MicrosoftGraphExecutionAdapter<T> { transport: T }
 
+impl<T: GraphTransport> MicrosoftGraphExecutionAdapter<T> {
+    /// Executes only after the request signature and cryptographic provenance
+    /// have been verified immediately before the side-effect boundary.
+    ///
+    /// This gate does not create authorization. It consumes an already
+    /// authorized execution and re-checks authorization, integrity,
+    /// signature, provenance and idempotency before transport.
+    pub fn execute_signed(
+        &mut self,
+        event: &EventEnvelope,
+        signed: &signature::GraphRequestSignature,
+        public_key: &[u8; 32],
+        registry: &mut IdempotencyRegistry,
+    ) -> Result<GraphExecutionReceipt, GraphAdapterError> {
+        let authorization_reference = event.authorization.reference.as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .ok_or(GraphAdapterError::AuthorizationReferenceMissing)?;
+
+        let request = build_request(event, authorization_reference)?;
+        signature::verify_request_signature(&request, signed, public_key)
+            .map_err(|error| GraphAdapterError::InvalidEvent(format!("signature verification failed: {error:?}")))?;
+
+        let claim = pre_side_effect_check(event, registry).map_err(map_safety_error)?;
+        if !matches!(claim, ClaimDecision::Claimed) {
+            return Err(GraphAdapterError::DuplicateIdempotencyKey);
+        }
+
+        let result = self.transport.send(&request)?;
+        if !(200..300).contains(&result.status_code) {
+            return Err(GraphAdapterError::GraphRejected(result.status_code));
+        }
+
+        Ok(GraphExecutionReceipt {
+            event_id: event.event_id.clone(),
+            trace_id: event.trace_id.clone(),
+            authorization_reference: authorization_reference.to_string(),
+            idempotency_key: event.idempotency_key.clone(),
+            status_code: result.status_code,
+            external_reference: result.external_reference,
+        })
+    }
+}
+
 impl<T> MicrosoftGraphExecutionAdapter<T> {
     /// Creates an adapter around an explicit Graph transport.
     pub fn new(transport: T) -> Self { Self { transport } }
@@ -274,6 +317,43 @@ mod tests {
         let mut registry = IdempotencyRegistry::default();
         let mut adapter = MicrosoftGraphExecutionAdapter::new(RecordingTransport { status_code: 403 });
         assert_eq!(adapter.execute(&event(), &mut registry), Err(GraphAdapterError::GraphRejected(403)));
+    }
+
+    #[test]
+    fn signed_execution_commit_gate_verifies_before_transport() -> Result<(), GraphAdapterError> {
+        let mut registry = IdempotencyRegistry::default();
+        let mut adapter = MicrosoftGraphExecutionAdapter::new(RecordingTransport { status_code: 201 });
+        let request = build_request(&event(), "auth-024")?;
+        let key = ed25519_dalek::SigningKey::from_bytes(&[9_u8; 32]);
+        let signed = signature::sign_request(&request, "key-029", &key)
+            .map_err(|error| GraphAdapterError::InvalidEvent(format!("{error:?}")))?;
+        let receipt = adapter.execute_signed(
+            &event(),
+            &signed,
+            key.verifying_key().as_bytes(),
+            &mut registry,
+        )?;
+        assert_eq!(receipt.status_code, 201);
+        Ok(())
+    }
+
+    #[test]
+    fn signed_execution_commit_gate_blocks_tampering() -> Result<(), GraphAdapterError> {
+        let mut registry = IdempotencyRegistry::default();
+        let mut adapter = MicrosoftGraphExecutionAdapter::new(RecordingTransport { status_code: 201 });
+        let mut event = event();
+        event.event_id = "tampered-event".into();
+        let original = build_request(&event(), "auth-024")?;
+        let key = ed25519_dalek::SigningKey::from_bytes(&[9_u8; 32]);
+        let signed = signature::sign_request(&original, "key-029", &key)
+            .map_err(|error| GraphAdapterError::InvalidEvent(format!("{error:?}")))?;
+        assert!(adapter.execute_signed(
+            &event,
+            &signed,
+            key.verifying_key().as_bytes(),
+            &mut registry,
+        ).is_err());
+        Ok(())
     }
 
     #[test]
