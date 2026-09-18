@@ -51,7 +51,7 @@ pub struct GraphRequest {
 /// Computes the canonical integrity digest for a bounded Graph request.
 pub fn request_integrity_hash(request: &GraphRequest) -> String {
     let canonical = format!(
-        "{:?}|{}|{}|{}|{}|{}|{}",
+        "{:?}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
         request.method,
         request.path,
         request.body,
