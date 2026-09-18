@@ -2,6 +2,7 @@
 #![warn(missing_docs)]
 
 use std::collections::HashSet;
+use serde::{Deserialize, Serialize};
 use palaco_office_event_contract::{AuthorizationState, EventEnvelope, ExecutionState};
 
 /// Safety-layer failure; all failures are fail-closed.
@@ -86,6 +87,90 @@ pub fn revocation_check(control: &ExecutionControl) -> Result<(), SafetyError> {
     if control.revoked { Err(SafetyError::RevokedExecution) } else { Ok(()) }
 }
 
+/// Persistent-friendly execution ledger entry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecutionLedgerEntry {
+    /// Monotonic sequence within the ledger snapshot.
+    pub sequence: u64,
+    /// Stable execution identity.
+    pub execution_id: String,
+    /// PALACO event identity.
+    pub event_id: String,
+    /// Trace identity.
+    pub trace_id: String,
+    /// Idempotency identity.
+    pub idempotency_key: String,
+    /// Authorization reference, when known.
+    pub authorization_reference: Option<String>,
+    /// Ledger state transition.
+    pub state: LedgerState,
+}
+
+/// Auditable execution lifecycle state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LedgerState {
+    /// Work is queued or pending.
+    Pending,
+    /// Execution has been committed.
+    Executing,
+    /// Execution completed successfully.
+    Completed,
+    /// Execution failed.
+    Failed,
+    /// Execution was explicitly revoked.
+    Revoked,
+    /// Authorization expired.
+    Expired,
+    /// Execution was cancelled without external side effect.
+    Cancelled,
+}
+
+/// Append-only execution ledger suitable for durable serialization.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecutionLedger { entries: Vec<ExecutionLedgerEntry>, next_sequence: u64 }
+
+impl ExecutionLedger {
+    /// Appends a lifecycle transition and returns its sequence number.
+    pub fn append(&mut self, mut entry: ExecutionLedgerEntry) -> u64 {
+        entry.sequence = self.next_sequence;
+        self.next_sequence = self.next_sequence.saturating_add(1);
+        let sequence = entry.sequence;
+        self.entries.push(entry);
+        sequence
+    }
+
+    /// Records an explicit revocation while preserving all prior history.
+    pub fn revoke(&mut self, execution_id: &str, event_id: &str, trace_id: &str, idempotency_key: &str, authorization_reference: Option<String>) -> u64 {
+        self.append(ExecutionLedgerEntry {
+            sequence: 0,
+            execution_id: execution_id.to_owned(),
+            event_id: event_id.to_owned(),
+            trace_id: trace_id.to_owned(),
+            idempotency_key: idempotency_key.to_owned(),
+            authorization_reference,
+            state: LedgerState::Revoked,
+        })
+    }
+
+    /// Returns the complete immutable history in sequence order.
+    pub fn entries(&self) -> &[ExecutionLedgerEntry] { &self.entries }
+
+    /// Serializes the ledger for durable storage or transport.
+    pub fn canonical_json(&self) -> Result<String, String> {
+        serde_json::to_string(self).map_err(|error| error.to_string())
+    }
+
+    /// Restores a ledger snapshot without inventing or dropping history.
+    pub fn from_json(value: &str) -> Result<Self, String> {
+        serde_json::from_str(value).map_err(|error| error.to_string())
+    }
+
+    /// Returns whether the latest recorded state is revoked.
+    pub fn is_revoked(&self, execution_id: &str) -> bool {
+        self.entries.iter().rev().find(|entry| entry.execution_id == execution_id).map(|entry| entry.state == LedgerState::Revoked).unwrap_or(false)
+    }
+}
+
 /// Last safety boundary before an external side effect.
 pub fn pre_side_effect_check(event: &EventEnvelope, registry: &mut IdempotencyRegistry) -> Result<ClaimDecision, SafetyError> {
     event.validate().map_err(SafetyError::InvalidEvent)?;
@@ -148,6 +233,24 @@ mod tests {
             evidence_ref: "evidence-021".into(),
             source_ref: "graph:message-021".into(),
         }
+    }
+
+    #[test]
+    fn ledger_preserves_revocation_history_across_serialization() -> Result<(), SafetyError> {
+        let mut ledger = ExecutionLedger::default();
+        ledger.append(ExecutionLedgerEntry {
+            sequence: 0, execution_id: "exec-031".into(), event_id: "event-031".into(),
+            trace_id: "trace-031".into(), idempotency_key: "idem-031".into(),
+            authorization_reference: Some("auth-031".into()), state: LedgerState::Pending,
+        });
+        ledger.revoke("exec-031", "event-031", "trace-031", "idem-031", Some("auth-031".into()));
+        let encoded = ledger.canonical_json().map_err(SafetyError::InvalidEvent)?;
+        let restored = ExecutionLedger::from_json(&encoded).map_err(SafetyError::InvalidEvent)?;
+        assert_eq!(restored.entries().len(), 2);
+        assert!(restored.is_revoked("exec-031"));
+        assert_eq!(restored.entries()[0].state, LedgerState::Pending);
+        assert_eq!(restored.entries()[1].state, LedgerState::Revoked);
+        Ok(())
     }
 
     #[test]
