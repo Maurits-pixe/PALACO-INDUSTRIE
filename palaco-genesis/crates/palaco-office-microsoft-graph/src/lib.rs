@@ -5,7 +5,7 @@ pub mod auth;
 pub mod signature;
 
 use palaco_office_event_contract::{AuthorizationState, EventEnvelope, ExecutionState};
-use palaco_office_execution_safety::{pre_side_effect_check, ClaimDecision, IdempotencyRegistry, SafetyError};
+use palaco_office_execution_safety::{pre_side_effect_check, revocation_check, ClaimDecision, ExecutionControl, IdempotencyRegistry, SafetyError};
 
 /// HTTP method required by a Microsoft Graph execution request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -175,6 +175,38 @@ pub fn build_task_request(
 pub struct MicrosoftGraphExecutionAdapter<T> { transport: T }
 
 impl<T: GraphTransport> MicrosoftGraphExecutionAdapter<T> {
+    /// Executes a signed request with a first-class revocation control.
+    ///
+    /// REVOKE is checked after signature verification and again immediately
+    /// before transport. A valid signature can never bypass a later
+    /// revocation. Revocation also clears scheduled retries.
+    pub fn execute_signed_with_control(
+        &mut self,
+        event: &EventEnvelope,
+        signed: &signature::GraphRequestSignature,
+        public_key: &[u8; 32],
+        registry: &mut IdempotencyRegistry,
+        control: &ExecutionControl,
+    ) -> Result<GraphExecutionReceipt, GraphAdapterError> {
+        let authorization_reference = event.authorization.reference.as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .ok_or(GraphAdapterError::AuthorizationReferenceMissing)?;
+        let request = build_request(event, authorization_reference)?;
+        signature::verify_request_signature(&request, signed, public_key)
+            .map_err(|error| GraphAdapterError::InvalidEvent(format!("signature verification failed: {error:?}")))?;
+        revocation_check(control).map_err(map_safety_error)?;
+        let claim = pre_side_effect_check(event, registry).map_err(map_safety_error)?;
+        if !matches!(claim, ClaimDecision::Claimed) { return Err(GraphAdapterError::DuplicateIdempotencyKey); }
+        revocation_check(control).map_err(map_safety_error)?;
+        let result = self.transport.send(&request)?;
+        if !(200..300).contains(&result.status_code) { return Err(GraphAdapterError::GraphRejected(result.status_code)); }
+        Ok(GraphExecutionReceipt {
+            event_id: event.event_id.clone(), trace_id: event.trace_id.clone(),
+            authorization_reference: authorization_reference.to_string(),
+            idempotency_key: event.idempotency_key.clone(), status_code: result.status_code,
+            external_reference: result.external_reference,
+        })
+    }
     /// Executes only after the request signature and cryptographic provenance
     /// have been verified immediately before the side-effect boundary.
     ///
@@ -254,6 +286,7 @@ fn map_safety_error(error: SafetyError) -> GraphAdapterError {
         SafetyError::ExecutionTerminal => GraphAdapterError::ExecutionTerminal,
         SafetyError::DuplicateIdempotencyKey => GraphAdapterError::DuplicateIdempotencyKey,
         SafetyError::EmptyIdempotencyKey => GraphAdapterError::InvalidEvent("idempotency_key is empty".into()),
+        SafetyError::RevokedExecution => GraphAdapterError::ExecutionTerminal,
     }
 }
 
@@ -319,6 +352,18 @@ mod tests {
         assert_eq!(adapter.execute(&event(), &mut registry), Err(GraphAdapterError::GraphRejected(403)));
     }
 
+    #[test]
+    fn signed_execution_is_blocked_by_late_revocation() -> Result<(), GraphAdapterError> {
+        let mut registry = IdempotencyRegistry::default();
+        let mut adapter = MicrosoftGraphExecutionAdapter::new(RecordingTransport { status_code: 201 });
+        let request = build_request(&event(), "auth-024")?;
+        let key = ed25519_dalek::SigningKey::from_bytes(&[9_u8; 32]);
+        let signed = signature::sign_request(&request, "key-030", &key).map_err(|error| GraphAdapterError::InvalidEvent(format!("{error:?}")))?;
+        let mut control = ExecutionControl::new("exec-030", "trace-024");
+        control.revoke();
+        assert_eq!(adapter.execute_signed_with_control(&event(), &signed, key.verifying_key().as_bytes(), &mut registry, &control), Err(GraphAdapterError::ExecutionTerminal));
+        Ok(())
+    }
     #[test]
     fn signed_execution_commit_gate_verifies_before_transport() -> Result<(), GraphAdapterError> {
         let mut registry = IdempotencyRegistry::default();
