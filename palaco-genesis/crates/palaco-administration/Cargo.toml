@@ -6,3 +6,6 @@ rust-version = "1.81"
 
 [lints]
 workspace = true
+
+[dependencies]
+postgres = "0.19"
