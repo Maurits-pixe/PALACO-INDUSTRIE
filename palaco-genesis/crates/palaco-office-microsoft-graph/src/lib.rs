@@ -120,6 +120,27 @@ pub fn build_request(event: &EventEnvelope, authorization_reference: &str) -> Re
     })
 }
 
+
+/// Builds a fully bound Microsoft To Do task request from a canonical payload.
+///
+/// The list identifier is supplied explicitly by the canonical payload; no
+/// placeholder resource path is permitted.
+pub fn build_task_request(
+    event: &EventEnvelope,
+    authorization_reference: &str,
+    payload: &palaco_office_event_contract::TaskCreatePayload,
+) -> Result<GraphRequest, GraphAdapterError> {
+    let mut request = build_request(event, authorization_reference)?;
+    let action = event.proposed_action.as_ref().ok_or(GraphAdapterError::ActionMissing)?;
+    if action.action_type != "create_task" || action.destination != "todo" {
+        return Err(GraphAdapterError::UnsupportedAction(action.action_type.clone()));
+    }
+    payload.validate().map_err(GraphAdapterError::InvalidEvent)?;
+    request.path = format!("/me/todo/lists/{}/tasks", payload.list_id);
+    request.body = payload.canonical_json().map_err(GraphAdapterError::InvalidEvent)?;
+    Ok(request)
+}
+
 /// Concrete orchestration boundary for Microsoft Graph.
 pub struct MicrosoftGraphExecutionAdapter<T> { transport: T }
 
