@@ -1,0 +1,11 @@
+[package]
+name = "palaco-office-outbox-dispatcher"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.81"
+
+[dependencies]
+postgres = "0.19"
+
+[lints]
+workspace = true
