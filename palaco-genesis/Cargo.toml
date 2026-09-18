@@ -13,6 +13,7 @@ members = [
     "crates/palaco-observatory",
     "crates/palaco-office-event-contract",
     "crates/palaco-office-execution-safety",
+    "crates/palaco-office-execution-adapter",
 ]
 resolver = "2"
 
