@@ -6,7 +6,7 @@ use palaco_office_execution_safety::{pre_side_effect_check, ClaimDecision, Idemp
 
 /// HTTP method required by a Microsoft Graph execution request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GraphMethod { /// HTTP POST. */ Post }
+pub enum GraphMethod { /// HTTP POST.\n    Post }
 
 /// Transport-level outcome returned by a Microsoft Graph client.
 #[derive(Debug, Clone, PartialEq, Eq)]
