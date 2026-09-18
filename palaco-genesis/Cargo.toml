@@ -11,6 +11,10 @@ members = [
     "crates/palaco-runtime",
     "crates/palaco-audit",
     "crates/palaco-observatory",
+    "crates/palaco-office-event-contract",
+    "crates/palaco-office-execution-safety",
+    "crates/palaco-office-execution-adapter",
+    "crates/palaco-office-microsoft-graph",
 ]
 resolver = "2"
 
