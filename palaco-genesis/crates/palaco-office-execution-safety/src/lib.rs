@@ -156,7 +156,7 @@ impl ExecutionLedger {
     pub fn entries(&self) -> &[ExecutionLedgerEntry] { &self.entries }
 
     /// Serializes the ledger for durable storage or transport.
-    pub fn canonical_json(&self) -> Result<String, String> {
+    pub fn storage_json(&self) -> Result<String, String> {
         serde_json::to_string(self).map_err(|error| error.to_string())
     }
 
@@ -244,7 +244,7 @@ mod tests {
             authorization_reference: Some("auth-031".into()), state: LedgerState::Pending,
         });
         ledger.revoke("exec-031", "event-031", "trace-031", "idem-031", Some("auth-031".into()));
-        let encoded = ledger.canonical_json().map_err(SafetyError::InvalidEvent)?;
+        let encoded = ledger.storage_json().map_err(SafetyError::InvalidEvent)?;
         let restored = ExecutionLedger::from_json(&encoded).map_err(SafetyError::InvalidEvent)?;
         assert_eq!(restored.entries().len(), 2);
         assert!(restored.is_revoked("exec-031"));
@@ -256,7 +256,7 @@ mod tests {
     #[test]
     fn revoke_cancels_pending_and_retryable_work() {
         let mut control = ExecutionControl::new("exec-030", "trace-030");
-        control.schedule_retry().expect("retry should be schedulable before revoke");
+        assert_eq!(control.schedule_retry(), Ok(()));
         control.revoke();
         assert!(!control.permits_execution());
         assert_eq!(control.scheduled_retries, 0);
