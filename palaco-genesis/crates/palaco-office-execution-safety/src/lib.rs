@@ -151,6 +151,29 @@ mod tests {
     }
 
     #[test]
+    fn revoke_cancels_pending_and_retryable_work() {
+        let mut control = ExecutionControl::new("exec-030", "trace-030");
+        control.schedule_retry().expect("retry should be schedulable before revoke");
+        control.revoke();
+        assert!(!control.permits_execution());
+        assert_eq!(control.scheduled_retries, 0);
+        assert_eq!(revocation_check(&control), Err(SafetyError::RevokedExecution));
+        assert_eq!(control.schedule_retry(), Err(SafetyError::RevokedExecution));
+    }
+
+    #[test]
+    fn revocation_remains_distinct_from_expiration() {
+        let mut revoked = event();
+        revoked.authorization.state = AuthorizationState::Revoked;
+        let mut expired = event();
+        expired.authorization.state = AuthorizationState::Expired;
+        let mut registry = IdempotencyRegistry::default();
+        assert_eq!(pre_side_effect_check(&revoked, &mut registry), Err(SafetyError::AuthorizationNotExecutable));
+        assert_eq!(pre_side_effect_check(&expired, &mut registry), Err(SafetyError::AuthorizationNotExecutable));
+        assert_ne!(revoked.authorization.state, expired.authorization.state);
+    }
+
+    #[test]
     fn duplicate_claim_is_blocked() -> Result<(), SafetyError> {
         let e = event(); let mut r = IdempotencyRegistry::default();
         assert_eq!(pre_side_effect_check(&e, &mut r)?, ClaimDecision::Claimed);
