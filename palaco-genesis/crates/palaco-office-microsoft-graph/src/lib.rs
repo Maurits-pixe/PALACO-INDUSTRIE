@@ -80,6 +80,8 @@ pub enum GraphAdapterError {
     ExecutionNotStarted,
     /// Execution is terminal or blocked.
     ExecutionTerminal,
+    /// Execution was explicitly revoked.
+    RevokedExecution,
     /// Idempotency key has already been consumed.
     DuplicateIdempotencyKey,
     /// Proposed action is missing.
@@ -286,7 +288,7 @@ fn map_safety_error(error: SafetyError) -> GraphAdapterError {
         SafetyError::ExecutionTerminal => GraphAdapterError::ExecutionTerminal,
         SafetyError::DuplicateIdempotencyKey => GraphAdapterError::DuplicateIdempotencyKey,
         SafetyError::EmptyIdempotencyKey => GraphAdapterError::InvalidEvent("idempotency_key is empty".into()),
-        SafetyError::RevokedExecution => GraphAdapterError::ExecutionTerminal,
+        SafetyError::RevokedExecution => GraphAdapterError::RevokedExecution,
     }
 }
 
