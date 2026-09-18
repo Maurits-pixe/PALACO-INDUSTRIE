@@ -1,6 +1,10 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod task;
+
+pub use task::TaskCreatePayload;
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
