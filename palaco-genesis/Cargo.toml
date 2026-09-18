@@ -16,6 +16,7 @@ members = [
     "crates/palaco-office-execution-adapter",
     "crates/palaco-office-microsoft-graph",
     "crates/palaco-office-governance",
+    "crates/palaco-office-postgres-ledger",
 ]
 resolver = "2"
 
