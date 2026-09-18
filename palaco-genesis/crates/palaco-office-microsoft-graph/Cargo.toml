@@ -8,3 +8,4 @@ description = "PALACO constitutional Microsoft Graph execution adapter boundary"
 [dependencies]
 palaco-office-event-contract = { path = "../palaco-office-event-contract" }
 palaco-office-execution-safety = { path = "../palaco-office-execution-safety" }
+sha2 = "0.10"
