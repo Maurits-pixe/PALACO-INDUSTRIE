@@ -2,6 +2,7 @@
 #![warn(missing_docs)]
 
 pub mod auth;
+pub mod signature;
 
 use palaco_office_event_contract::{AuthorizationState, EventEnvelope, ExecutionState};
 use palaco_office_execution_safety::{pre_side_effect_check, ClaimDecision, IdempotencyRegistry, SafetyError};
@@ -39,6 +40,12 @@ pub struct GraphRequest {
     pub idempotency_key: String,
     /// SHA-256 digest of the canonical request fields.
     pub integrity_hash: String,
+    /// Source provenance reference inherited from the PALACO event.
+    pub source_ref: String,
+    /// Evidence reference inherited from the PALACO event.
+    pub evidence_ref: String,
+    /// Stable provenance reference bound to the signed request.
+    pub provenance_reference: String,
 }
 
 /// Computes the canonical integrity digest for a bounded Graph request.
@@ -51,7 +58,10 @@ pub fn request_integrity_hash(request: &GraphRequest) -> String {
         request.event_id,
         request.trace_id,
         request.authorization_reference,
-        request.idempotency_key
+        request.idempotency_key,
+        request.source_ref,
+        request.evidence_ref,
+        request.provenance_reference
     );
     Sha256::digest(canonical.as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -141,6 +151,9 @@ pub fn build_request(event: &EventEnvelope, authorization_reference: &str) -> Re
         authorization_reference: authorization_reference.to_string(),
         idempotency_key: event.idempotency_key.clone(),
         integrity_hash: String::new(),
+        source_ref: event.source_ref.clone(),
+        evidence_ref: event.evidence_ref.clone(),
+        provenance_reference: format!("{}:{}", event.source_ref, event.event_id),
     };
     request.integrity_hash = request_integrity_hash(&request);
     Ok(request)
@@ -240,6 +253,7 @@ mod tests {
     fn request_integrity_is_self_verifying() -> Result<(), GraphAdapterError> {
         let request = build_request(&event(), "auth-024")?;
         assert!(verify_request_integrity(&request));
+        assert_eq!(request.source_ref, "graph:message-024");
         Ok(())
     }
 
