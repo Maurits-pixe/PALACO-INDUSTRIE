@@ -1,3 +1,5 @@
+pub mod auth;
+
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
