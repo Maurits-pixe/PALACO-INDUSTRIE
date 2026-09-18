@@ -6,9 +6,15 @@ use palaco_office_execution_safety::{pre_side_effect_check, ClaimDecision, Idemp
 
 /// HTTP method required by a Microsoft Graph execution request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GraphMethod {
-    /// HTTP POST.
-    Post,
+pub enum GraphMethod { /// HTTP POST. */ Post }
+
+/// Transport-level outcome returned by a Microsoft Graph client.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GraphTransportResult {
+    /// HTTP status code returned by Microsoft Graph.
+    pub status_code: u16,
+    /// External Microsoft Graph object identifier, when supplied by the API.
+    pub external_reference: Option<String>,
 }
 
 /// A fully bounded Microsoft Graph request.
@@ -18,7 +24,7 @@ pub struct GraphRequest {
     pub method: GraphMethod,
     /// Graph resource path, without host or query string.
     pub path: String,
-    /// JSON request body. The adapter does not serialize or send it.
+    /// Request body supplied by the caller.
     pub body: String,
     /// PALACO event identifier.
     pub event_id: String,
@@ -30,18 +36,7 @@ pub struct GraphRequest {
     pub idempotency_key: String,
 }
 
-/// Result returned by a transport after Microsoft Graph accepts the request.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GraphTransportResult {
-    /// External Microsoft Graph object identifier, when supplied by the API.
-    pub external_reference: Option<String>,
-}
-
 /// Transport boundary for Microsoft Graph.
-///
-/// Implementations may perform network I/O. This crate supplies the
-/// constitutional checks and request construction; it does not contain
-/// credentials, network clients, or implicit authorization.
 pub trait GraphTransport {
     /// Sends one already-authorized Graph request.
     fn send(&self, request: &GraphRequest) -> Result<GraphTransportResult, GraphAdapterError>;
@@ -70,6 +65,8 @@ pub enum GraphAdapterError {
     DestinationMissing,
     /// Transport rejected or failed the request.
     Transport(String),
+    /// Microsoft Graph returned a non-success status.
+    GraphRejected(u16),
 }
 
 /// Receipt for an accepted external operation.
@@ -83,26 +80,20 @@ pub struct GraphExecutionReceipt {
     pub authorization_reference: String,
     /// Idempotency key.
     pub idempotency_key: String,
+    /// HTTP status returned by Microsoft Graph.
+    pub status_code: u16,
     /// External Graph object reference, when available.
     pub external_reference: Option<String>,
 }
 
-/// Builds the Graph request for a supported PALACO action.
+/// Builds a bounded Graph request for the supported action.
 ///
-/// The initial supported action is `create_task` targeting Microsoft To Do.
-/// The destination must be `todo`; list identifiers and task payload remain
-/// in the caller-controlled JSON body and are never inferred by the adapter.
-pub fn build_request(
-    event: &EventEnvelope,
-    authorization_reference: &str,
-) -> Result<GraphRequest, GraphAdapterError> {
+/// No task payload is invented: the canonical event contract currently
+/// contains action type and destination, but no task-payload contract.
+pub fn build_request(event: &EventEnvelope, authorization_reference: &str) -> Result<GraphRequest, GraphAdapterError> {
     event.validate().map_err(GraphAdapterError::InvalidEvent)?;
-    if !matches!(event.authorization.state, AuthorizationState::Granted) {
-        return Err(GraphAdapterError::AuthorizationNotGranted);
-    }
-    if authorization_reference.trim().is_empty() {
-        return Err(GraphAdapterError::AuthorizationReferenceMissing);
-    }
+    if !matches!(event.authorization.state, AuthorizationState::Granted) { return Err(GraphAdapterError::AuthorizationNotGranted); }
+    if authorization_reference.trim().is_empty() { return Err(GraphAdapterError::AuthorizationReferenceMissing); }
     if !matches!(event.execution, ExecutionState::Started) {
         return Err(match event.execution {
             ExecutionState::NotStarted => GraphAdapterError::ExecutionNotStarted,
@@ -110,21 +101,16 @@ pub fn build_request(
             ExecutionState::Started => unreachable!(),
         });
     }
-
     let action = event.proposed_action.as_ref().ok_or(GraphAdapterError::ActionMissing)?;
-    if action.destination.trim().is_empty() {
-        return Err(GraphAdapterError::DestinationMissing);
-    }
-
+    if action.destination.trim().is_empty() { return Err(GraphAdapterError::DestinationMissing); }
     let path = match (action.action_type.as_str(), action.destination.as_str()) {
         ("create_task", "todo") => "/me/todo/lists/{list-id}/tasks".to_string(),
         (action_type, _) => return Err(GraphAdapterError::UnsupportedAction(action_type.to_string())),
     };
-
     Ok(GraphRequest {
         method: GraphMethod::Post,
         path,
-        body: action.destination.clone(),
+        body: "{}".to_string(),
         event_id: event.event_id.clone(),
         trace_id: event.trace_id.clone(),
         authorization_reference: authorization_reference.to_string(),
@@ -133,46 +119,30 @@ pub fn build_request(
 }
 
 /// Concrete orchestration boundary for Microsoft Graph.
-///
-/// `execute` performs the PALACO safety re-check, claims idempotency, builds
-/// the bounded request, and only then calls the injected transport.
-pub struct MicrosoftGraphExecutionAdapter<T> {
-    transport: T,
-}
+pub struct MicrosoftGraphExecutionAdapter<T> { transport: T }
 
 impl<T> MicrosoftGraphExecutionAdapter<T> {
     /// Creates an adapter around an explicit Graph transport.
-    pub fn new(transport: T) -> Self {
-        Self { transport }
-    }
+    pub fn new(transport: T) -> Self { Self { transport } }
 }
 
 impl<T: GraphTransport> MicrosoftGraphExecutionAdapter<T> {
-    /// Executes one operation through the transport after all checks pass.
-    pub fn execute(
-        &mut self,
-        event: &EventEnvelope,
-        registry: &mut IdempotencyRegistry,
-    ) -> Result<GraphExecutionReceipt, GraphAdapterError> {
-        let claim = pre_side_effect_check(event, registry).map_err(map_safety_error)?;
-        if !matches!(claim, ClaimDecision::Claimed) {
-            return Err(GraphAdapterError::DuplicateIdempotencyKey);
-        }
-
-        let authorization_reference = event
-            .authorization
-            .reference
-            .as_deref()
+    /// Executes one operation after PALACO checks and idempotency claim pass.
+    pub fn execute(&mut self, event: &EventEnvelope, registry: &mut IdempotencyRegistry) -> Result<GraphExecutionReceipt, GraphAdapterError> {
+        let authorization_reference = event.authorization.reference.as_deref()
             .filter(|value| !value.trim().is_empty())
             .ok_or(GraphAdapterError::AuthorizationReferenceMissing)?;
-
         let request = build_request(event, authorization_reference)?;
+        let claim = pre_side_effect_check(event, registry).map_err(map_safety_error)?;
+        if !matches!(claim, ClaimDecision::Claimed) { return Err(GraphAdapterError::DuplicateIdempotencyKey); }
         let result = self.transport.send(&request)?;
+        if !(200..300).contains(&result.status_code) { return Err(GraphAdapterError::GraphRejected(result.status_code)); }
         Ok(GraphExecutionReceipt {
             event_id: event.event_id.clone(),
             trace_id: event.trace_id.clone(),
             authorization_reference: authorization_reference.to_string(),
             idempotency_key: event.idempotency_key.clone(),
+            status_code: result.status_code,
             external_reference: result.external_reference,
         })
     }
@@ -195,58 +165,49 @@ mod tests {
     use super::*;
     use palaco_office_event_contract::{Authorization, ProposedAction};
 
-    #[derive(Default)]
-    struct RecordingTransport {
-        calls: usize,
-    }
-
+    struct RecordingTransport { status_code: u16 }
     impl GraphTransport for RecordingTransport {
         fn send(&self, _request: &GraphRequest) -> Result<GraphTransportResult, GraphAdapterError> {
-            Ok(GraphTransportResult { external_reference: Some("graph-object-023".into()) })
+            Ok(GraphTransportResult { status_code: self.status_code, external_reference: Some("graph-object-024".into()) })
         }
     }
 
     fn event() -> EventEnvelope {
         EventEnvelope {
-            event_id: "event-023".into(),
-            authorization: Authorization { state: AuthorizationState::Granted, reference: Some("auth-023".into()) },
+            event_id: "event-024".into(),
+            authorization: Authorization { state: AuthorizationState::Granted, reference: Some("auth-024".into()) },
             execution: ExecutionState::Started,
-            trace_id: "trace-023".into(),
-            idempotency_key: "idem-023".into(),
+            trace_id: "trace-024".into(),
+            idempotency_key: "idem-024".into(),
             proposed_action: Some(ProposedAction { action_type: "create_task".into(), destination: "todo".into() }),
-            evidence_ref: "evidence-023".into(),
-            source_ref: "graph:message-023".into(),
+            evidence_ref: "evidence-024".into(),
+            source_ref: "graph:message-024".into(),
         }
     }
 
     #[test]
-    fn request_is_bounded_to_todo_task_creation() -> Result<(), GraphAdapterError> {
-        let request = build_request(&event(), "auth-023")?;
-        assert_eq!(request.method, GraphMethod::Post);
-        assert_eq!(request.path, "/me/todo/lists/{list-id}/tasks");
-        assert_eq!(request.authorization_reference, "auth-023");
+    fn request_has_no_invented_payload() -> Result<(), GraphAdapterError> {
+        let request = build_request(&event(), "auth-024")?;
+        assert_eq!(request.body, "{}");
         Ok(())
     }
 
     #[test]
-    fn revoked_event_is_blocked_before_request_construction() {
-        let mut e = event();
-        e.authorization.state = AuthorizationState::Revoked;
-        assert_eq!(
-            build_request(&e, "auth-023"),
-            Err(GraphAdapterError::AuthorizationNotGranted)
-        );
+    fn rejected_graph_response_is_not_receipted_as_success() {
+        let mut registry = IdempotencyRegistry::default();
+        let mut adapter = MicrosoftGraphExecutionAdapter::new(RecordingTransport { status_code: 403 });
+        assert_eq!(adapter.execute(&event(), &mut registry), Err(GraphAdapterError::GraphRejected(403)));
     }
 
     #[test]
-    fn duplicate_idempotency_is_blocked_before_transport() {
+    fn successful_response_preserves_lineage() -> Result<(), GraphAdapterError> {
         let mut registry = IdempotencyRegistry::default();
-        let mut adapter = MicrosoftGraphExecutionAdapter::new(RecordingTransport::default());
-        let first = adapter.execute(&event(), &mut registry);
-        assert_eq!(first.map(|r| r.external_reference), Ok(Some("graph-object-023".into())));
-        assert_eq!(
-            adapter.execute(&event(), &mut registry),
-            Err(GraphAdapterError::DuplicateIdempotencyKey)
-        );
+        let mut adapter = MicrosoftGraphExecutionAdapter::new(RecordingTransport { status_code: 201 });
+        let receipt = adapter.execute(&event(), &mut registry)?;
+        assert_eq!(receipt.event_id, "event-024");
+        assert_eq!(receipt.trace_id, "trace-024");
+        assert_eq!(receipt.authorization_reference, "auth-024");
+        assert_eq!(receipt.status_code, 201);
+        Ok(())
     }
 }
