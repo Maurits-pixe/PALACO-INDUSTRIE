@@ -11,6 +11,7 @@ members = [
     "crates/palaco-runtime",
     "crates/palaco-audit",
     "crates/palaco-observatory",
+    "crates/palaco-administration",
 ]
 resolver = "2"
 
