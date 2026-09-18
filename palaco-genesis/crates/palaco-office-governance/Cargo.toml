@@ -1,0 +1,9 @@
+[package]
+name = "palaco-office-governance"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.81"
+description = "PALACO constitutional Council of Seven consent boundary"
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
