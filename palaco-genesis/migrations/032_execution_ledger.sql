@@ -1,7 +1,6 @@
--- ∆ GO-032 — Durable execution ledger
--- PostgreSQL migration contract.
--- The ledger is append-only. Current state is a projection used by workers
--- for fail-closed execution checks. External side effects never occur here.
+-- ∆ GO-032/033 — Durable execution ledger
+-- Lifecycle history is append-only. Idempotency claims are separate from
+-- lifecycle rows so one execution can legitimately have many transitions.
 
 CREATE TABLE IF NOT EXISTS palaco_execution_ledger (
     sequence_id BIGSERIAL PRIMARY KEY,
@@ -14,8 +13,14 @@ CREATE TABLE IF NOT EXISTS palaco_execution_ledger (
     recorded_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS ux_palaco_execution_ledger_idempotency ON palaco_execution_ledger (idempotency_key);
-CREATE INDEX IF NOT EXISTS ix_palaco_execution_ledger_execution ON palaco_execution_ledger (execution_id, sequence_id);
+CREATE INDEX IF NOT EXISTS ix_palaco_execution_ledger_execution
+    ON palaco_execution_ledger (execution_id, sequence_id);
+
+CREATE TABLE IF NOT EXISTS palaco_execution_idempotency (
+    idempotency_key TEXT PRIMARY KEY,
+    execution_id TEXT NOT NULL,
+    claimed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 
 CREATE TABLE IF NOT EXISTS palaco_execution_current (
     execution_id TEXT PRIMARY KEY,
@@ -33,4 +38,6 @@ CREATE TABLE IF NOT EXISTS palaco_execution_outbox (
     dispatched_at TIMESTAMPTZ
 );
 
-CREATE INDEX IF NOT EXISTS ix_palaco_execution_outbox_pending ON palaco_execution_outbox (created_at, outbox_id) WHERE dispatched_at IS NULL;
+CREATE INDEX IF NOT EXISTS ix_palaco_execution_outbox_pending
+    ON palaco_execution_outbox (created_at, outbox_id)
+    WHERE dispatched_at IS NULL;
