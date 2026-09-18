@@ -1,0 +1,11 @@
+[package]
+name = "palaco-office-postgres-ledger"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.81"
+
+[dependencies]
+palaco-office-execution-safety = { path = "../palaco-office-execution-safety" }
+
+[lints]
+workspace = true

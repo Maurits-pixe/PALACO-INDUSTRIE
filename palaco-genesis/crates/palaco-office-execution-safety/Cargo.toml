@@ -1,0 +1,13 @@
+[package]
+name = "palaco-office-execution-safety"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.81"
+
+[dependencies]
+palaco-office-event-contract = { path = "../palaco-office-event-contract" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[lints]
+workspace = true
