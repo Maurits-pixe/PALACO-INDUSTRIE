@@ -58,6 +58,9 @@ pub trait ExecutionLedgerRepository {
 
     /// Performs an atomic first-class revocation.
     fn revoke(&mut self, execution_id: &str) -> Result<(), LedgerRepositoryError>;
+
+    /// Claims one pending outbox signal for dispatch without changing its fact.
+    fn claim_outbox_signal(&mut self) -> Result<(), LedgerRepositoryError>;
 }
 
 /// SQL contract for a worker claim.
@@ -93,10 +96,38 @@ COMMIT;
 
 /// SQL contract for durable idempotency.
 pub const IDEMPOTENCY_SQL: &str = r#"
-INSERT INTO palaco_execution_ledger
-    (execution_id, event_id, trace_id, idempotency_key, authorization_reference, state)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO palaco_execution_idempotency (idempotency_key, execution_id)
+VALUES ($1, $2)
 ON CONFLICT (idempotency_key) DO NOTHING;
+"#;
+
+
+/// SQL contract for an atomic lifecycle append plus current-state projection.
+pub const APPEND_TRANSITION_SQL: &str = r#"
+BEGIN;
+SELECT execution_id, state
+FROM palaco_execution_current
+WHERE execution_id = $1
+FOR UPDATE;
+-- Validate the transition against the locked current state.
+-- INSERT the new immutable lifecycle row.
+-- UPDATE palaco_execution_current to the new sequence/state.
+-- INSERT STATE_CHANGED into palaco_execution_outbox.
+COMMIT;
+"#;
+
+/// SQL contract for revocation propagation through the transactional outbox.
+pub const REVOKE_OUTBOX_SQL: &str = r#"
+BEGIN;
+SELECT execution_id, state
+FROM palaco_execution_current
+WHERE execution_id = $1
+FOR UPDATE;
+-- Reject terminal states.
+-- INSERT REVOKED into palaco_execution_ledger.
+-- UPDATE palaco_execution_current to REVOKED.
+-- INSERT REVOKED into palaco_execution_outbox.
+COMMIT;
 "#;
 
 /// Maps the domain state to the stable PostgreSQL representation.
