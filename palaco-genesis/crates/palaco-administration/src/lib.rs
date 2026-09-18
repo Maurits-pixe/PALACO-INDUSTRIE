@@ -6,6 +6,11 @@
 //! This crate models administrative facts and their provenance. It deliberately
 //! does not authorize, execute, or settle financial actions.
 
+pub mod atomic_close;
+pub mod closing_gate;
+pub mod period;
+pub mod reconciliation;
+
 /// Constitutional distinction between an administrative fact and an action.
 pub const ADMINISTRATION_RULE: &str = "ADMINISTRATIVE FACT ≠ AUTHORITY";
 
