@@ -132,7 +132,7 @@ pub fn build_request(event: &EventEnvelope, authorization_reference: &str) -> Re
         ("create_task", "todo") => "/me/todo/lists/{list-id}/tasks".to_string(),
         (action_type, _) => return Err(GraphAdapterError::UnsupportedAction(action_type.to_string())),
     };
-    Ok(GraphRequest {
+    let mut request = GraphRequest {
         method: GraphMethod::Post,
         path,
         body: "{}".to_string(),
@@ -141,7 +141,9 @@ pub fn build_request(event: &EventEnvelope, authorization_reference: &str) -> Re
         authorization_reference: authorization_reference.to_string(),
         idempotency_key: event.idempotency_key.clone(),
         integrity_hash: String::new(),
-    })
+    };
+    request.integrity_hash = request_integrity_hash(&request);
+    Ok(request)
 }
 
 
