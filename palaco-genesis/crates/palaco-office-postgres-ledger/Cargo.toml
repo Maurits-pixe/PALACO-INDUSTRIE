@@ -6,6 +6,7 @@ rust-version = "1.81"
 
 [dependencies]
 palaco-office-execution-safety = { path = "../palaco-office-execution-safety" }
+postgres = "0.19"
 
 [lints]
 workspace = true
