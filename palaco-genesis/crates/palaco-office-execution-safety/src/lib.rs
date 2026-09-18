@@ -21,6 +21,8 @@ pub enum SafetyError {
     DuplicateIdempotencyKey,
     /// Idempotency key is empty.
     EmptyIdempotencyKey,
+    /// Execution was revoked before the side effect boundary.
+    RevokedExecution,
 }
 
 /// Result of an idempotency claim.
@@ -38,6 +40,50 @@ impl IdempotencyRegistry {
         if key.is_empty() { return Err(SafetyError::EmptyIdempotencyKey); }
         if self.claimed.insert(key.to_owned()) { Ok(ClaimDecision::Claimed) } else { Ok(ClaimDecision::Duplicate) }
     }
+}
+
+/// Lifecycle control for queued, pending, retryable execution.
+///
+/// Revocation is a first-class control signal. It is intentionally separate
+/// from expiration and remains valid even after a request was signed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionControl {
+    /// Stable execution identity.
+    pub execution_id: String,
+    /// Trace identity retained across cancellation.
+    pub trace_id: String,
+    /// Whether queued work is currently revoked.
+    pub revoked: bool,
+    /// Number of retries that have been scheduled.
+    pub scheduled_retries: u32,
+}
+
+impl ExecutionControl {
+    /// Creates an active execution control record.
+    pub fn new(execution_id: impl Into<String>, trace_id: impl Into<String>) -> Self {
+        Self { execution_id: execution_id.into(), trace_id: trace_id.into(), revoked: false, scheduled_retries: 0 }
+    }
+
+    /// Propagates REVOKE to pending and retryable work.
+    pub fn revoke(&mut self) {
+        self.revoked = true;
+        self.scheduled_retries = 0;
+    }
+
+    /// Records one retry only while execution remains active.
+    pub fn schedule_retry(&mut self) -> Result<(), SafetyError> {
+        if self.revoked { return Err(SafetyError::RevokedExecution); }
+        self.scheduled_retries = self.scheduled_retries.saturating_add(1);
+        Ok(())
+    }
+
+    /// Returns whether another execution attempt may proceed.
+    pub fn permits_execution(&self) -> bool { !self.revoked }
+}
+
+/// Final revocation gate immediately before external transport.
+pub fn revocation_check(control: &ExecutionControl) -> Result<(), SafetyError> {
+    if control.revoked { Err(SafetyError::RevokedExecution) } else { Ok(()) }
 }
 
 /// Last safety boundary before an external side effect.
