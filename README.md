@@ -71,7 +71,6 @@ If an older `/home/runner/work/PALACO-INDUSTRIE/PALACO-INDUSTRIE/data/palaco-sto
 The current repository-world catalog includes:
 
 - `Maurits-pixe/PALACO`
-- `Maurits-pixe/PALACO-INDUSTRIE`
 
 ## GitHub Repository Sync
 
@@ -80,13 +79,20 @@ By default, the server loads public repositories from `Maurits-pixe` through the
 Optional environment variables:
 
 - `GITHUB_OWNER` to load repositories for a different GitHub account
-- `GITHUB_TOKEN` to include private owned repositories in the sync
+- `GITHUB_TOKEN` to authenticate GitHub API requests; private repositories are excluded from the public catalog
 - `SESSION_TTL_DAYS` to control how long persisted sign-in sessions remain valid
+- `SESSION_COOKIE_SECURE=true` for HTTPS environments, including TLS terminated at a reverse proxy. Production (`NODE_ENV=production`) always enables Secure cookies; local HTTP development leaves this unset.
 
 When GitHub sync is unavailable, the interface falls back to the built-in PALACO repository catalog so the application remains usable.
 
 ## Authentication
 
 The app now uses an httpOnly session cookie for browser authentication. Session tokens are stored hashed in SQLite and are not kept in browser localStorage. Authenticated write requests also require a session-bound CSRF token supplied by the frontend.
+
+Session restoration reloads the CSRF token before enabling writes. Logout reports success only after the server confirms it; a failed request retains the visible session and offers a retry. Serve production traffic over HTTPS and set `NODE_ENV=production`. Forwarded request headers are not trusted to determine cookie security.
+
+`/api/repositories` remains a public discovery endpoint. Only repositories explicitly marked public are cached and returned, including when a server-side GitHub token is configured. The offline fallback contains only the public PALACO repository. Signing up for PALACO does not grant access to the owner's private GitHub repositories.
+
+Run `npm run check` and `npm test` with Node 24 or later. The regression suite exercises session restoration, authenticated writes, logout success/failure, cookie flags, and public catalog filtering using temporary SQLite databases and a stubbed GitHub API.
 
 This build now uses SQLite for persistence, including persisted sign-in sessions, but it still does not include a managed production database, shared multi-user spaces, or advanced world-building features.

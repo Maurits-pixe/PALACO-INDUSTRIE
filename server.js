@@ -11,6 +11,7 @@ const GITHUB_OWNER = process.env.GITHUB_OWNER || "Maurits-pixe";
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || "";
 const SESSION_TTL_DAYS = Number(process.env.SESSION_TTL_DAYS || 30);
 const SESSION_COOKIE_NAME = "palaco_session";
+const SESSION_COOKIE_SECURE = process.env.NODE_ENV === "production" || process.env.SESSION_COOKIE_SECURE === "true";
 const ROOT_DIR = __dirname;
 const DATA_DIR = path.join(ROOT_DIR, "data");
 const DATABASE_PATH = path.join(DATA_DIR, "palaco.db");
@@ -22,12 +23,7 @@ const DEFAULT_REPOSITORY_CATALOG = [
     name: "PALACO",
     url: "https://github.com/Maurits-pixe/PALACO",
     description: "The broader PALACO repository and public project space.",
-  },
-  {
-    key: "palaco-industrie",
-    name: "PALACO-INDUSTRIE",
-    url: "https://github.com/Maurits-pixe/PALACO-INDUSTRIE",
-    description: "The implementation repository for the PALACO-INDUSTRIE prototype.",
+    visibility: "public",
   },
 ];
 
@@ -293,6 +289,7 @@ function buildSessionCookie(token) {
     "HttpOnly",
     "Path=/",
     "SameSite=Strict",
+    ...(SESSION_COOKIE_SECURE ? ["Secure"] : []),
     `Max-Age=${sessionMaxAgeSeconds()}`,
   ].join("; ");
 }
@@ -303,6 +300,7 @@ function clearSessionCookie() {
     "HttpOnly",
     "Path=/",
     "SameSite=Strict",
+    ...(SESSION_COOKIE_SECURE ? ["Secure"] : []),
     "Max-Age=0",
   ].join("; ");
 }
@@ -630,6 +628,7 @@ async function fetchGitHubRepositories() {
     const pageItems = Array.isArray(payload) ? payload : [];
     const ownedItems = pageItems.filter(
       (repository) => repository?.owner?.login?.toLowerCase() === GITHUB_OWNER.toLowerCase()
+        && repository.private === false
     );
 
     repositories.push(
@@ -1014,7 +1013,10 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "GET" && pathname === "/api/repositories") {
       const forceRefresh = url.searchParams.get("refresh") === "1";
       const catalog = await getRepositoryCatalog(forceRefresh);
-      sendJson(response, 200, catalog);
+      sendJson(response, 200, {
+        ...catalog,
+        repositories: catalog.repositories.filter((repository) => repository.visibility === "public"),
+      });
       return;
     }
 
