@@ -9,6 +9,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Root application files and tests only. Imported historical snapshots
+          # include filenames beyond the runner filesystem's component limit.
+          sparse-checkout: |
+            tests
       - uses: actions/setup-node@v4
         with:
           node-version: 24
