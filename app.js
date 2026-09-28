@@ -382,7 +382,7 @@ async function restoreSession() {
     ]);
 
     applySignedInState(
-      { user: session.user, citadel: citadel.citadel, messages: messages.messages },
+      { user: session.user, csrfToken: session.csrfToken, citadel: citadel.citadel, messages: messages.messages },
       `Welcome back ${session.user.name}.`
     );
   } catch (error) {
@@ -469,10 +469,11 @@ signoutButton.addEventListener("click", async () => {
 
   try {
     await requestJson("/api/auth/logout", { method: "POST" });
-  } catch {
-    // ignore logout errors and still clear the local session
-  } finally {
     clearSession("You have signed out.");
+  } catch {
+    setStatus(sessionStatus, "Sign-out could not be confirmed. Please retry.", true);
+  } finally {
+    signoutButton.disabled = !state.user;
   }
 });
 
