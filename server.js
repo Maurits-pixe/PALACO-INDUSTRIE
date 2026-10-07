@@ -233,9 +233,30 @@ function openDatabase() {
       is_consumed INTEGER NOT NULL DEFAULT 0
     );
 
+    CREATE TABLE IF NOT EXISTS tasks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      description TEXT,
+      priority TEXT NOT NULL DEFAULT 'MEDIUM',
+      status TEXT NOT NULL DEFAULT 'PENDING',
+      assignee TEXT,
+      clearance INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+    );
+
     CREATE INDEX IF NOT EXISTS idx_tickets_expires ON mutation_tickets(expires_at);
     CREATE INDEX IF NOT EXISTS idx_tickets_owner ON mutation_tickets(owner_id);
   `);
+
+  const taskCount = database.prepare("SELECT COUNT(*) AS count FROM tasks").get();
+  if (Number(taskCount?.count || 0) === 0) {
+    const insertTask = database.prepare(
+      "INSERT INTO tasks (title, description, priority, status, assignee, clearance) VALUES (?, ?, ?, ?, ?, ?)"
+    );
+    insertTask.run("Beveiliging Perimeter Oost", "Controleer sensoren sector 4-9", "HIGH", "PENDING", "Alpha Team", 3);
+    insertTask.run("Decryptie Data Packet #402", "Analyseer hoofdheader", "CRITICAL", "PENDING", "Tech Ops", 5);
+    insertTask.run("Logistieke Voorraad Check", "Inventarisatie unit 7", "MEDIUM", "PENDING", "Support", 1);
+  }
 }
 
 function databaseHasUsers() {
@@ -379,6 +400,14 @@ function ensureMessagesForUser(user) {
 
   insertMessages(user.id, defaultMessages(user.name));
   return getMessagesByUserId(user.id);
+}
+
+function getTaskById(taskId) {
+  return database.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId) || null;
+}
+
+function listTasks() {
+  return database.prepare("SELECT * FROM tasks ORDER BY created_at DESC").all();
 }
 
 function ensureSessionSchema() {
@@ -1051,26 +1080,28 @@ async function handleExecuteMutation(request, response) {
     }
 
     const payload = JSON.parse(ticket.payload);
+    const taskId = Number(payload.taskId);
+
+    if (!Number.isInteger(taskId)) {
+      throw new Error("INVALID_PAYLOAD");
+    }
+
     let result;
 
     if (ticket.action_type === "COMPLETE") {
       result = database
-        .prepare("UPDATE citadels SET citadel_description = citadel_description WHERE user_id = ?")
-        .run(auth.user.id);
+        .prepare("UPDATE tasks SET status = ? WHERE id = ?")
+        .run("COMPLETED", taskId);
     } else if (ticket.action_type === "ESCALATE") {
       result = database
-        .prepare("UPDATE citadels SET citadel_theme = citadel_theme WHERE user_id = ?")
-        .run(auth.user.id);
+        .prepare("UPDATE tasks SET priority = ? WHERE id = ?")
+        .run("HIGH", taskId);
     } else {
       throw new Error("UNKNOWN_ACTION");
     }
 
-    if (!payload.taskId) {
-      throw new Error("INVALID_PAYLOAD");
-    }
-
     if (result.changes === 0) {
-      throw new Error("NO_MUTATION_APPLIED");
+      throw new Error("TASK_NOT_FOUND");
     }
 
     database
@@ -1105,6 +1136,11 @@ async function handleExecuteMutation(request, response) {
 
     if (error.message === "TICKET_OWNER_MISMATCH") {
       sendJson(response, 403, { success: false, error: "TICKET_OWNER_MISMATCH" });
+      return;
+    }
+
+    if (error.message === "TASK_NOT_FOUND") {
+      sendJson(response, 404, { success: false, error: "TASK_NOT_FOUND" });
       return;
     }
 
@@ -1192,6 +1228,16 @@ const server = http.createServer(async (request, response) => {
 
     if (request.method === "POST" && pathname === "/api/messages") {
       await handlePostMessage(request, response);
+      return;
+    }
+
+    if (request.method === "GET" && pathname === "/api/tasks") {
+      const auth = getAuthenticatedUser(request);
+      if (!auth) {
+        sendError(response, 401, "Sign in to load tasks.");
+        return;
+      }
+      sendJson(response, 200, { tasks: listTasks() });
       return;
     }
 

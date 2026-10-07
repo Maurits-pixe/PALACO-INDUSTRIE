@@ -76,6 +76,7 @@ const state = {
   logoHistoryIndex: 0,
   pendingMutation: null,
   timeLeft: null,
+  tasks: [],
 };
 
 const signupForm = document.getElementById("signup-form");
@@ -102,6 +103,11 @@ const logoFrame = document.getElementById("logo-frame");
 const repoList = document.getElementById("repo-list");
 const repoCount = document.getElementById("repo-count");
 const repoRefreshButton = document.getElementById("repo-refresh");
+const mutationStatus = document.getElementById("mutation-status");
+const mutationCompleteButton = document.getElementById("mutation-complete");
+const mutationEscalateButton = document.getElementById("mutation-escalate");
+const mutationConfirmButton = document.getElementById("mutation-confirm");
+const mutationCancelButton = document.getElementById("mutation-cancel");
 
 function escapeHtml(value) {
   return String(value)
@@ -421,9 +427,8 @@ function clearMutation() {
 let timerInterval = null;
 
 function renderMutationStatus() {
-  const existing = document.getElementById("mutation-status");
-  if (!existing) return;
-  existing.textContent = state.pendingMutation
+  if (!mutationStatus) return;
+  mutationStatus.textContent = state.pendingMutation
     ? `Pending ${state.pendingMutation.action} for ${state.pendingMutation.taskName}. ${state.timeLeft ?? 0}s left.`
     : "No pending mutation.";
 }
@@ -445,6 +450,20 @@ function startCountdown(expiresAt) {
 
   tick();
   timerInterval = setInterval(tick, 250);
+}
+
+async function loadTasks() {
+  if (!state.user) return;
+  try {
+    const payload = await requestJson("/api/tasks");
+    state.tasks = Array.isArray(payload.tasks) ? payload.tasks : [];
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+function getTaskForMutation() {
+  return state.tasks[0] || { id: 1, title: "Demo task" };
 }
 
 async function initiateMutation(action, task) {
@@ -498,6 +517,7 @@ async function confirmMutation() {
     clearMutation();
     renderMutationStatus();
     alert("Mutatie succesvol uitgevoerd.");
+    await loadTasks();
   } catch (error) {
     if (error.message === "D013_EXPIRED") {
       alert("⚠️ FOUT: Server weigerde mutatie. Toestemming was verlopen. Geen wijziging opgeslagen.");
@@ -535,6 +555,7 @@ signupForm.addEventListener("submit", async (event) => {
     document.getElementById("signup-language").value = "English";
     applySignedInState(payload, `Account created for ${payload.user.name}.`);
     setStatus(signupStatus, "Account created.");
+    await loadTasks();
   } catch (error) {
     setStatus(signupStatus, error.message, true);
   } finally {
@@ -560,6 +581,7 @@ loginForm.addEventListener("submit", async (event) => {
     loginForm.reset();
     applySignedInState(payload, `Signed in as ${payload.user.name}.`);
     setStatus(loginStatus, "Sign-in successful.");
+    await loadTasks();
   } catch (error) {
     setStatus(loginStatus, error.message, true);
   } finally {
@@ -686,6 +708,24 @@ repoRefreshButton.addEventListener("click", () => {
   loadRepositories();
 });
 
+mutationCompleteButton?.addEventListener("click", () => {
+  const task = getTaskForMutation();
+  initiateMutation("COMPLETE", task);
+});
+
+mutationEscalateButton?.addEventListener("click", () => {
+  const task = getTaskForMutation();
+  initiateMutation("ESCALATE", task);
+});
+
+mutationConfirmButton?.addEventListener("click", () => {
+  confirmMutation();
+});
+
+mutationCancelButton?.addEventListener("click", () => {
+  cancelMutation();
+});
+
 renderAccount(null);
 renderCitadel();
 renderMessages();
@@ -693,5 +733,6 @@ renderRepositories();
 initLogoDestinations();
 renderLogoPage("home");
 setInteractiveState(false);
+renderMutationStatus();
 loadRepositories();
 restoreSession();
