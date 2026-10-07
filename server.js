@@ -222,6 +222,19 @@ function openDatabase() {
       expires_at TEXT NOT NULL,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS mutation_tickets (
+      id TEXT PRIMARY KEY,
+      action_type TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      owner_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      is_consumed INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_tickets_expires ON mutation_tickets(expires_at);
+    CREATE INDEX IF NOT EXISTS idx_tickets_owner ON mutation_tickets(owner_id);
   `);
 }
 
@@ -370,7 +383,6 @@ function ensureMessagesForUser(user) {
 
 function ensureSessionSchema() {
   const columns = database.prepare("PRAGMA table_info(sessions)").all();
-  const hasTokenHash = columns.some((column) => column.name === "token_hash");
   const hasToken = columns.some((column) => column.name === "token");
   const hasCsrfToken = columns.some((column) => column.name === "csrf_token");
 
@@ -957,6 +969,149 @@ async function handlePostMessage(request, response) {
   sendJson(response, 201, { messages });
 }
 
+async function handlePrepareMutation(request, response) {
+  const auth = getAuthenticatedUser(request);
+
+  if (!auth) {
+    sendError(response, 401, "Sign in to prepare a mutation.");
+    return;
+  }
+
+  if (!verifyCsrfToken(request, auth.session)) {
+    sendError(response, 403, "Invalid CSRF token.");
+    return;
+  }
+
+  const body = await readRequestBody(request);
+  const action = cleanText(body.action, 40);
+  const payload = body.payload && typeof body.payload === "object" ? body.payload : null;
+
+  if (!action || !payload) {
+    sendError(response, 400, "Action and payload are required.");
+    return;
+  }
+
+  const ticketId = crypto.randomUUID();
+  const createdAt = Date.now();
+  const expiresAt = createdAt + 30_000;
+
+  database
+    .prepare(
+      `INSERT INTO mutation_tickets (id, action_type, payload, owner_id, created_at, expires_at, is_consumed)
+       VALUES (?, ?, ?, ?, ?, ?, 0)`
+    )
+    .run(ticketId, action, JSON.stringify(payload), auth.user.id, nowIso(), expiresAt);
+
+  sendJson(response, 201, {
+    ticketId,
+    expiresAt,
+    message: "Mutatie voorbereid. Bevestig binnen 30 seconden.",
+  });
+}
+
+async function handleExecuteMutation(request, response) {
+  const auth = getAuthenticatedUser(request);
+
+  if (!auth) {
+    sendError(response, 401, "Sign in to execute a mutation.");
+    return;
+  }
+
+  if (!verifyCsrfToken(request, auth.session)) {
+    sendError(response, 403, "Invalid CSRF token.");
+    return;
+  }
+
+  const body = await readRequestBody(request);
+  const ticketId = cleanText(body.ticketId, 80);
+
+  if (!ticketId) {
+    sendError(response, 400, "Missing ticketId");
+    return;
+  }
+
+  const runMutation = database.transaction(() => {
+    const ticket = database.prepare("SELECT * FROM mutation_tickets WHERE id = ?").get(ticketId);
+
+    if (!ticket) {
+      throw new Error("TICKET_NOT_FOUND");
+    }
+
+    if (ticket.owner_id !== auth.user.id) {
+      throw new Error("TICKET_OWNER_MISMATCH");
+    }
+
+    if (ticket.is_consumed) {
+      throw new Error("TICKET_ALREADY_USED");
+    }
+
+    const now = Date.now();
+    if (now >= ticket.expires_at) {
+      throw new Error("CONSENT_EXPIRED_D013");
+    }
+
+    const payload = JSON.parse(ticket.payload);
+    let result;
+
+    if (ticket.action_type === "COMPLETE") {
+      result = database
+        .prepare("UPDATE citadels SET citadel_description = citadel_description WHERE user_id = ?")
+        .run(auth.user.id);
+    } else if (ticket.action_type === "ESCALATE") {
+      result = database
+        .prepare("UPDATE citadels SET citadel_theme = citadel_theme WHERE user_id = ?")
+        .run(auth.user.id);
+    } else {
+      throw new Error("UNKNOWN_ACTION");
+    }
+
+    if (!payload.taskId) {
+      throw new Error("INVALID_PAYLOAD");
+    }
+
+    if (result.changes === 0) {
+      throw new Error("NO_MUTATION_APPLIED");
+    }
+
+    database
+      .prepare("UPDATE mutation_tickets SET is_consumed = 1 WHERE id = ?")
+      .run(ticketId);
+
+    return {
+      success: true,
+      mutatedAt: now,
+      changes: result.changes,
+    };
+  });
+
+  try {
+    const result = runMutation.immediate();
+    sendJson(response, 200, result);
+  } catch (error) {
+    if (error.message === "CONSENT_EXPIRED_D013") {
+      sendJson(response, 403, {
+        success: false,
+        error: "CONSENT_EXPIRED",
+        code: "D013_VIOLATION",
+        message: "Toestemming verlopen vóór opslag. Wijziging NIET doorgevoerd.",
+      });
+      return;
+    }
+
+    if (error.message === "TICKET_NOT_FOUND") {
+      sendJson(response, 404, { success: false, error: "TICKET_NOT_FOUND" });
+      return;
+    }
+
+    if (error.message === "TICKET_OWNER_MISMATCH") {
+      sendJson(response, 403, { success: false, error: "TICKET_OWNER_MISMATCH" });
+      return;
+    }
+
+    sendJson(response, 400, { success: false, error: error.message });
+  }
+}
+
 async function serveStaticAsset(response, pathname) {
   const fileName = STATIC_FILES[pathname];
 
@@ -1037,6 +1192,16 @@ const server = http.createServer(async (request, response) => {
 
     if (request.method === "POST" && pathname === "/api/messages") {
       await handlePostMessage(request, response);
+      return;
+    }
+
+    if (request.method === "POST" && pathname === "/api/mutations/prepare") {
+      await handlePrepareMutation(request, response);
+      return;
+    }
+
+    if (request.method === "POST" && pathname === "/api/mutations/execute") {
+      await handleExecuteMutation(request, response);
       return;
     }
 

@@ -223,6 +223,20 @@
         <div id="repo-list" class="repository-list" aria-live="polite"></div>
       </section>
 
+      <section id="mutation-center" class="panel" aria-labelledby="mutation-title">
+        <h2 id="mutation-title">D-013 mutation center</h2>
+        <p class="section-copy">
+          Prepare and confirm a time-limited mutation. The backend enforces the deadline atomically.
+        </p>
+        <p id="mutation-status" class="notice">No pending mutation.</p>
+        <div class="button-row">
+          <button class="button button--secondary" type="button" id="mutation-complete">Prepare complete</button>
+          <button class="button button--secondary" type="button" id="mutation-escalate">Prepare escalate</button>
+          <button class="button button--primary" type="button" id="mutation-confirm">Confirm</button>
+          <button class="button button--ghost" type="button" id="mutation-cancel">Cancel</button>
+        </div>
+      </section>
+
       <section id="rio-chat" class="panel panel--split" aria-labelledby="rio-title">
         <div>
           <h2 id="rio-title">RIO chatbox</h2>

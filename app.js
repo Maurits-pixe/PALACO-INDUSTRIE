@@ -74,6 +74,8 @@ const state = {
   repositories: [],
   logoHistory: ["home"],
   logoHistoryIndex: 0,
+  pendingMutation: null,
+  timeLeft: null,
 };
 
 const signupForm = document.getElementById("signup-form");
@@ -409,6 +411,107 @@ async function loadRepositories() {
     repoRefreshButton.disabled = false;
     repoRefreshButton.dataset.refresh = "0";
   }
+}
+
+function clearMutation() {
+  state.pendingMutation = null;
+  state.timeLeft = null;
+}
+
+let timerInterval = null;
+
+function renderMutationStatus() {
+  const existing = document.getElementById("mutation-status");
+  if (!existing) return;
+  existing.textContent = state.pendingMutation
+    ? `Pending ${state.pendingMutation.action} for ${state.pendingMutation.taskName}. ${state.timeLeft ?? 0}s left.`
+    : "No pending mutation.";
+}
+
+function startCountdown(expiresAt) {
+  clearInterval(timerInterval);
+
+  const tick = () => {
+    const remainingMs = expiresAt - Date.now();
+    state.timeLeft = Math.max(0, Math.ceil(remainingMs / 1000));
+    renderMutationStatus();
+
+    if (remainingMs <= 0) {
+      clearInterval(timerInterval);
+      alert("TOESTEMMING VERLOPEN (D-013). Verzoek verwijderd.");
+      cancelMutation();
+    }
+  };
+
+  tick();
+  timerInterval = setInterval(tick, 250);
+}
+
+async function initiateMutation(action, task) {
+  state.pendingMutation = {
+    action,
+    task,
+    taskName: task.title,
+    ticketId: null,
+    expiresAt: null,
+  };
+  renderMutationStatus();
+
+  try {
+    const res = await requestJson("/api/mutations/prepare", {
+      method: "POST",
+      body: {
+        action,
+        payload: { taskId: task.id },
+        ownerId: state.user?.id || "demo-user",
+      },
+    });
+
+    state.pendingMutation.ticketId = res.ticketId;
+    state.pendingMutation.expiresAt = res.expiresAt;
+    startCountdown(res.expiresAt);
+  } catch (error) {
+    alert(`Kon mutatie niet voorbereiden: ${error.message}`);
+    cancelMutation();
+  }
+}
+
+async function confirmMutation() {
+  if (!state.pendingMutation?.ticketId) return;
+  clearInterval(timerInterval);
+
+  try {
+    const res = await requestJson("/api/mutations/execute", {
+      method: "POST",
+      body: {
+        ticketId: state.pendingMutation.ticketId,
+      },
+    });
+
+    if (!res.success) {
+      if (res.code === "D013_VIOLATION") {
+        throw new Error("D013_EXPIRED");
+      }
+      throw new Error(res.error || "Execution failed");
+    }
+
+    clearMutation();
+    renderMutationStatus();
+    alert("Mutatie succesvol uitgevoerd.");
+  } catch (error) {
+    if (error.message === "D013_EXPIRED") {
+      alert("⚠️ FOUT: Server weigerde mutatie. Toestemming was verlopen. Geen wijziging opgeslagen.");
+    } else {
+      alert(`Fout: ${error.message}`);
+    }
+    cancelMutation();
+  }
+}
+
+function cancelMutation() {
+  clearInterval(timerInterval);
+  clearMutation();
+  renderMutationStatus();
 }
 
 signupForm.addEventListener("submit", async (event) => {
