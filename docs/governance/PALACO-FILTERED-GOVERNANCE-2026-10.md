@@ -37,4 +37,6 @@ Any change in a product or commercial status appends an auditable transition rec
 
 See the [PALACO filtered governance synthesis](https://github.com/Maurits-pixe/PALACO/blob/codex/palaco-filtered-governance-20261007/docs/governance/PALACO-FILTERED-GOVERNANCE-2026-10.md) and the [Citadel boundary note](https://github.com/Maurits-pixe/PALACO-Citadel/blob/codex/palaco-filtered-governance-20261007/04-GOVERNANCE/PALACO-FILTERED-BOUNDARIES-2026-10.md).
 
+The product layer does not create authority. History remains addressable: a new status or entitlement appends a transition record and never erases the prior state.
+
 **Not merged, published or deployed:** this note is on the review branch only.
