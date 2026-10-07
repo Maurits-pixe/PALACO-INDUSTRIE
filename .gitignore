@@ -1,4 +1,16 @@
 node_modules/
-data/palaco-store.json
-data/palaco.db
-data/palaco.db-*
+dist/
+.env
+.env.local
+*.pem
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
