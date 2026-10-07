@@ -22,7 +22,7 @@ payment != consent
 CI/evidence != runtime authorization
 ```
 
-The spelling `VORM9EVING` is preserved exactly. RIO is reserved for the river/communication concept in this audit and remains separate from ELIXER capability/catalog meaning.
+The spelling `VORM9EVIN9` is preserved exactly. RIO is reserved for the river/communication concept in this audit and remains separate from ELIXER capability/catalog meaning.
 
 ## Status handling
 
