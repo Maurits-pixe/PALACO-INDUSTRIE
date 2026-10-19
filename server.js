@@ -9,6 +9,12 @@ const HOST = process.env.HOST || "0.0.0.0";
 const PORT = Number(process.env.PORT || 3000);
 const GITHUB_OWNER = process.env.GITHUB_OWNER || "Maurits-pixe";
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || "";
+const GITHUB_OWNERS = [...new Set((process.env.GITHUB_OWNERS ||
+  (GITHUB_OWNER.toLowerCase() === "maurits-pixe" ? `${GITHUB_OWNER},III6V9-Architect` : GITHUB_OWNER))
+  .split(",").map(owner => owner.trim()))];
+if (!GITHUB_OWNERS.length || GITHUB_OWNERS.length > 8 || GITHUB_OWNERS.some(owner =>
+  !/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/.test(owner))) throw new Error("Invalid public catalog owners.");
+
 const SESSION_TTL_DAYS = Number(process.env.SESSION_TTL_DAYS || 30);
 const SESSION_COOKIE_NAME = "palaco_session";
 const SESSION_COOKIE_SECURE = process.env.NODE_ENV === "production" || process.env.SESSION_COOKIE_SECURE === "true";
@@ -18,17 +24,16 @@ const DATABASE_PATH = path.join(DATA_DIR, "palaco.db");
 const LEGACY_STORE_PATH = path.join(DATA_DIR, "palaco-store.json");
 
 const DEFAULT_REPOSITORY_CATALOG = [
-  {
-    key: "palaco",
-    name: "PALACO",
-    url: "https://github.com/Maurits-pixe/PALACO",
-    description: "The broader PALACO repository and public project space.",
-    visibility: "public",
-  },
-];
+  ["Maurits-pixe", "PALACO"], ["Maurits-pixe", "palaco-genesis"],
+  ["Maurits-pixe", "PALACO-BOOK-1"], ["Maurits-pixe", "PALACO-INDUSTRIE"],
+  ["Maurits-pixe", "PALACO-Citadel"], ["III6V9-Architect", "local-qa"],
+].filter(([owner]) => GITHUB_OWNERS.some(value => value.toLowerCase() === owner.toLowerCase()))
+ .map(([owner,name]) => ({key:owner.toLowerCase() === GITHUB_OWNER.toLowerCase() ? repositoryKey(name) : `${repositoryKey(owner)}--${repositoryKey(name)}`,
+   name,url:`https://github.com/${owner}/${name}`,description:`Public ${owner} project reference.`,visibility:"public"}));
 
 let repositoryCache = {
   owner: GITHUB_OWNER,
+  owners: GITHUB_OWNERS,
   repositories: DEFAULT_REPOSITORY_CATALOG,
   fetchedAt: 0,
   source: "fallback",
@@ -650,50 +655,36 @@ async function fetchGitHubRepositories() {
     headers.Authorization = "Bearer " + GITHUB_TOKEN;
   }
 
-  const repositories = [];
-  let page = 1;
-
-  while (page <= 10) {
-    const endpoint = GITHUB_TOKEN
-      ? `https://api.github.com/user/repos?affiliation=owner&sort=updated&per_page=100&page=${page}`
-      : `https://api.github.com/users/${encodeURIComponent(
-          GITHUB_OWNER
-        )}/repos?sort=updated&per_page=100&page=${page}`;
-    const response = await fetch(endpoint, { headers });
-
-    if (!response.ok) {
-      throw new Error(`GitHub sync failed with status ${response.status}.`);
+  const repositories = [], seen = new Set();
+  const deadline = Date.now() + 15000;
+  for (const owner of GITHUB_OWNERS) {
+    for (let page = 1; page <= 10; page += 1) {
+      if (Date.now() >= deadline) throw new Error("Public catalog deadline exceeded.");
+      // Only the public owner endpoint is used, even with a server-side token.
+      const endpoint = `https://api.github.com/users/${encodeURIComponent(owner)}/repos?type=owner&sort=updated&per_page=100&page=${page}`;
+      const response = await fetch(endpoint, {headers, redirect:"error", signal:AbortSignal.timeout(Math.max(1,deadline-Date.now()))});
+      if (!response.ok) throw new Error("Public GitHub catalog unavailable.");
+      const pageItems = await response.json();
+      if (!Array.isArray(pageItems)) throw new Error("Invalid public GitHub catalog.");
+      for (const repository of pageItems) {
+        if (repository?.private !== false || repository?.owner?.login?.toLowerCase() !== owner.toLowerCase()
+          || typeof repository.name !== "string" || !/^[A-Za-z0-9_.-]{1,100}$/.test(repository.name)
+          || repository.name === "." || repository.name === "..") continue;
+        const url = `https://github.com/${owner}/${repository.name}`;
+        if (seen.has(url.toLowerCase())) continue;
+        seen.add(url.toLowerCase());
+        repositories.push({
+          key:owner.toLowerCase() === GITHUB_OWNER.toLowerCase() ? repositoryKey(repository.name) : `${repositoryKey(owner)}--${repositoryKey(repository.name)}`,
+          name:repository.name,url,
+          description:typeof repository.description === "string" ? cleanText(repository.description,200) : `Public repository from ${owner}.`,
+          visibility:"public",
+        });
+      }
+      if (pageItems.length < 100) break;
+      if (page === 10) throw new Error("Public catalog capacity exceeded.");
     }
-
-    const payload = await response.json();
-    const pageItems = Array.isArray(payload) ? payload : [];
-    const ownedItems = pageItems.filter(
-      (repository) => repository?.owner?.login?.toLowerCase() === GITHUB_OWNER.toLowerCase()
-        && repository.private === false
-    );
-
-    repositories.push(
-      ...ownedItems.map((repository) => ({
-        key: repositoryKey(repository.name),
-        name: repository.name,
-        url: repository.html_url,
-        description:
-          cleanText(repository.description, 200) ||
-          `Repository from ${GITHUB_OWNER}'s PALACO network.`,
-        visibility: repository.private ? "private" : "public",
-      }))
-    );
-
-    if (pageItems.length < 100) {
-      break;
-    }
-
-    page += 1;
   }
-
-  if (repositories.length === 0) {
-    throw new Error("GitHub sync returned no repositories.");
-  }
+  if (!repositories.length) throw new Error("Public GitHub catalog empty.");
 
   return repositories;
 }
@@ -709,6 +700,7 @@ async function getRepositoryCatalog(forceRefresh = false) {
     const repositories = await fetchGitHubRepositories();
     repositoryCache = {
       owner: GITHUB_OWNER,
+  owners: GITHUB_OWNERS,
       repositories,
       fetchedAt: Date.now(),
       source: GITHUB_TOKEN ? "github-authenticated" : "github-public",
@@ -716,6 +708,7 @@ async function getRepositoryCatalog(forceRefresh = false) {
   } catch {
     repositoryCache = {
       owner: GITHUB_OWNER,
+  owners: GITHUB_OWNERS,
       repositories: DEFAULT_REPOSITORY_CATALOG,
       fetchedAt: Date.now(),
       source: "fallback",

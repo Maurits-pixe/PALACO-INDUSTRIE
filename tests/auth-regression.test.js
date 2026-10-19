@@ -9,7 +9,7 @@ const vm = require("node:vm");
 const serverSource = fs.readFileSync(path.join(__dirname, "../server.js"), "utf8");
 const appSource = fs.readFileSync(path.join(__dirname, "../app.js"), "utf8");
 
-async function startServer(t, env = {}) {
+async function startServer(t, env = {}, publicFixture = null) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "palaco-auth-test-"));
   let server;
   let githubUnavailable = false;
@@ -24,8 +24,9 @@ async function startServer(t, env = {}) {
     },
     __dirname: directory,
     process: { env: { HOST: "127.0.0.1", GITHUB_TOKEN: "test-only-token", ...env } },
-    console: { log() {} }, Buffer, URL,
-    async fetch() {
+    console: { log() {} }, Buffer, URL, AbortSignal,
+    async fetch(url, options) {
+      if (publicFixture) return publicFixture(url,options);
       if (githubUnavailable) throw new Error("offline");
       return { ok: true, json: async () => [
         { name: "public-project", private: false, owner: { login: "Maurits-pixe" }, html_url: "https://github.com/Maurits-pixe/public-project" },
@@ -165,7 +166,7 @@ test("public repository responses exclude private/unknown metadata on fresh, cac
   server.offline();
   const fallback = await (await fetch(server.url + "/api/repositories?refresh=1")).json();
   assert.equal(fallback.source, "fallback");
-  assert.deepEqual(fallback.repositories.map((repo) => repo.name), ["PALACO"]);
+  assert.deepEqual(fallback.repositories.map((repo) => repo.name), ["PALACO","palaco-genesis","PALACO-BOOK-1","PALACO-INDUSTRIE","PALACO-Citadel","local-qa"]);
   assert.ok(fallback.repositories.every((repo) => repo.visibility === "public"));
 });
 
@@ -189,3 +190,23 @@ for (const [name, env, secure] of [
     }
   });
 }
+
+test("two public owners cooperate without private metadata, untrusted links or key collisions", async t => {
+  const requests=[];
+  const server=await startServer(t,{},async (url,options)=>{
+    requests.push(url);assert.equal(options.redirect,"error");assert.ok(options.signal);
+    const owner=url.includes("/III6V9-Architect/") ? "III6V9-Architect" : "Maurits-pixe";
+    return {ok:true,json:async()=>[
+      {name:"same-name",private:false,owner:{login:owner},html_url:"javascript:bad"},
+      {name:"private-project",private:true,owner:{login:owner},description:"hidden-private"},
+      {name:"foreign",private:false,owner:{login:"attacker"}},
+      {name:"../bad",private:false,owner:{login:owner}},
+    ]};
+  });
+  const result=await (await fetch(server.url+"/api/repositories?refresh=1")).json();
+  assert.deepEqual(result.owners,["Maurits-pixe","III6V9-Architect"]);
+  assert.equal(result.repositories.length,2);assert.notEqual(result.repositories[0].key,result.repositories[1].key);
+  assert.deepEqual(result.repositories.map(r=>r.url),["https://github.com/Maurits-pixe/same-name","https://github.com/III6V9-Architect/same-name"]);
+  assert.doesNotMatch(JSON.stringify(result),/private-project|hidden-private|javascript|attacker|test-only-token/);
+  assert.equal(requests.length,2);assert.ok(requests.every(url=>url.startsWith("https://api.github.com/users/")));
+});

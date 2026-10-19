@@ -71,6 +71,11 @@ If an older `/home/runner/work/PALACO-INDUSTRIE/PALACO-INDUSTRIE/data/palaco-sto
 The current repository-world catalog includes:
 
 - `Maurits-pixe/PALACO`
+- `Maurits-pixe/palaco-genesis`
+- `Maurits-pixe/PALACO-BOOK-1`
+- `Maurits-pixe/PALACO-INDUSTRIE`
+- `Maurits-pixe/PALACO-Citadel`
+- `III6V9-Architect/local-qa`
 
 ## GitHub Repository Sync
 
@@ -96,3 +101,17 @@ Session restoration reloads the CSRF token before enabling writes. Logout report
 Run `npm run check` and `npm test` with Node 24 or later. The regression suite exercises session restoration, authenticated writes, logout success/failure, cookie flags, and public catalog filtering using temporary SQLite databases and a stubbed GitHub API.
 
 This build now uses SQLite for persistence, including persisted sign-in sessions, but it still does not include a managed production database, shared multi-user spaces, or advanced world-building features.
+
+## Candidate ecosystem document connection
+
+The public repository catalog now discovers both `Maurits-pixe` and
+`III6V9-Architect`. Set `GITHUB_OWNERS` to a comma-separated public-owner list
+(maximum eight); the existing `GITHUB_OWNER` remains the primary owner. Public
+owner endpoints, explicit public visibility, bounded pagination/deadlines and
+constructed GitHub URLs prevent private metadata or untrusted URLs entering the
+catalog. If a refresh fails, the six known public project references are used
+as an explicitly labelled fallback, filtered to the configured owners.
+
+`ecosystem/` adds the bounded document exchange candidate shared with PALACO,
+Genesis, Book, Citadel and the pinned III6V9 local Q&A module. Discovery and
+document exchange grant no shared account access, authorization or release.
