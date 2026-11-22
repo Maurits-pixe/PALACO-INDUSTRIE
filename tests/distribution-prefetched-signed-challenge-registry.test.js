@@ -372,3 +372,72 @@ test('circuit breaker rejects invalid thresholds and cooldown', () => {
     }
   } finally { f.db.close(); }
 });
+
+test('two registry instances share one authority fetch capacity', async () => {
+  const { createSharedAuthorityAdmission } = require('../distribution/shared-authority-admission');
+  const f = fixture();
+  try {
+    const shared = createSharedAuthorityAdmission({maxInFlight:1});
+    let release;
+    const gate = new Promise(resolve => {release=resolve;});
+    let calls = 0;
+    const fetch = async nonce => {calls++;await gate;return floorReply(nonce);};
+    const a = registry(f,fetch,{sharedAdmission:shared});
+    const b = registry(f,fetch,{sharedAdmission:shared});
+    const first = a.issue('palaco.one');
+    const denied = await b.issue('palaco.one');
+    assert.equal(denied.reason,'SHARED_AUTHORITY_CAPACITY_REACHED');
+    assert.equal(calls,1);
+    assert.equal(shared.snapshot().active,1);
+    release();
+    assert.equal((await first).issued,true);
+    assert.equal(shared.snapshot().active,0);
+    assert.equal((await b.issue('palaco.one')).issued,true);
+    assert.equal(calls,2);
+  } finally {f.db.close();}
+});
+
+test('shared admission rejection of consume preserves the original challenge', async () => {
+  const { createSharedAuthorityAdmission } = require('../distribution/shared-authority-admission');
+  const f=fixture();
+  try {
+    const trusted=registry(f,nonce=>floorReply(nonce));
+    const token=(await trusted.issue('palaco.one')).challenge;
+    const shared=createSharedAuthorityAdmission({maxInFlight:1});
+    let release;
+    const gate=new Promise(resolve=>{release=resolve;});
+    const a=registry(f,async nonce=>{await gate;return floorReply(nonce);},
+      {sharedAdmission:shared});
+    const b=registry(f,nonce=>floorReply(nonce),{sharedAdmission:shared});
+    const first=a.issue('palaco.one');
+    const {state,endorsement}=receipt(token);
+    const denied=await b.consume('palaco.one',token,state,endorsement,receiptRoots,10);
+    assert.ok(denied.findings.includes('SHARED_AUTHORITY_CAPACITY_REACHED'));
+    assert.equal(f.db.prepare('SELECT status FROM distribution_challenges WHERE challenge_hash=(SELECT challenge_hash FROM distribution_challenges WHERE namespace=? AND status=? ORDER BY rowid DESC LIMIT 1)').get('palaco.one','pending').status,'pending');
+    release();
+    await first;
+    assert.equal((await trusted.consume('palaco.one',token,state,endorsement,receiptRoots,10)).readiness,'AUTHORITY_RECEIPT_VALID');
+  } finally {f.db.close();}
+});
+
+test('shared permits return after failed floor proof', async () => {
+  const { createSharedAuthorityAdmission } = require('../distribution/shared-authority-admission');
+  const f=fixture();
+  try {
+    const shared=createSharedAuthorityAdmission({maxInFlight:1});
+    const broken=registry(f,()=>{throw Error('network');},{sharedAdmission:shared});
+    assert.equal((await broken.issue('palaco.one')).issued,false);
+    assert.equal(shared.snapshot().active,0);
+    const healthy=registry(f,nonce=>floorReply(nonce),{sharedAdmission:shared});
+    assert.equal((await healthy.issue('palaco.one')).issued,true);
+    assert.equal(shared.snapshot().active,0);
+  } finally {f.db.close();}
+});
+
+test('forged shared admission object is rejected',()=>{
+  const f=fixture();
+  try {
+    assert.throws(()=>registry(f,nonce=>floorReply(nonce),
+      {sharedAdmission:{acquire:()=>()=>{}}}),TypeError);
+  } finally {f.db.close();}
+});
