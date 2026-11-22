@@ -27,7 +27,7 @@ function deny(reason) {
 function createPrefetchedSignedChallengeRegistry(db, {
   floorAuthority, clock = Date.now, ttlMs = 60_000, maxPending = 128,
   maxRows = 100000, maxProofAgeMs = 5000, fetchTimeoutMs = 3000,
-  maxInFlight = 16,
+  maxInFlight = 16, failureThreshold = 3, cooldownMs = 30_000,
   monotonicNow = () => process.hrtime.bigint()
 } = {}) {
   if (!floorAuthority || typeof floorAuthority !== 'object' ||
@@ -45,12 +45,20 @@ function createPrefetchedSignedChallengeRegistry(db, {
       fetchTimeoutMs > maxProofAgeMs ||
       !Number.isSafeInteger(maxInFlight) || maxInFlight < 1 ||
       maxInFlight > 1024 ||
+      !Number.isSafeInteger(failureThreshold) || failureThreshold < 1 ||
+      failureThreshold > 100 ||
+      !Number.isSafeInteger(cooldownMs) || cooldownMs < 1 ||
+      cooldownMs > 300_000 ||
       typeof monotonicNow !== 'function') {
     throw new TypeError('Independent signed-floor configuration required');
   }
   const maxAgeNs = BigInt(maxProofAgeMs) * 1000000n;
   // Local-process admission control; no global/distributed resource guarantee.
   let inFlight = 0;
+  const cooldownNs = BigInt(cooldownMs) * 1000000n;
+  let consecutiveFailures = 0;
+  let blockedUntil = null;
+  let probeInProgress = false;
 
   async function prepareFloor() {
     const challenge = randomBytes(32).toString('hex');
@@ -112,9 +120,44 @@ function createPrefetchedSignedChallengeRegistry(db, {
         ? Object.freeze({ issued: false, reason: 'AUTHORITY_CAPACITY_REACHED' })
         : deny('AUTHORITY_CAPACITY_REACHED');
     }
+    // Only one half-open probe is admitted after the cooldown. This local
+    // breaker counts signed-floor preparation failures, not SQLite failures.
+    let isProbe = false;
+    try {
+      const now = monotonicNow();
+      if (typeof now !== 'bigint' || now < 0n) throw new Error('MONOTONIC_CLOCK_UNAVAILABLE');
+      if (blockedUntil !== null) {
+        if (now < blockedUntil || probeInProgress) {
+          return isIssue
+            ? Object.freeze({ issued: false, reason: 'AUTHORITY_CIRCUIT_OPEN' })
+            : deny('AUTHORITY_CIRCUIT_OPEN');
+        }
+        probeInProgress = true;
+        isProbe = true;
+      }
+    } catch (_) {
+      return isIssue
+        ? Object.freeze({ issued: false, reason: 'AUTHORITY_CLOCK_UNAVAILABLE' })
+        : deny('AUTHORITY_CLOCK_UNAVAILABLE');
+    }
     inFlight += 1;
     try {
-      const floor = await prepareFloor();
+      let floor;
+      try {
+        floor = await prepareFloor();
+        consecutiveFailures = 0;
+        blockedUntil = null;
+      } catch (_) {
+        consecutiveFailures += 1;
+        if (isProbe || consecutiveFailures >= failureThreshold) {
+          // A broken monotonic clock must not accidentally reopen the circuit.
+          let now;
+          try { now = monotonicNow(); } catch (_) {}
+          blockedUntil = typeof now === 'bigint' && now >= 0n
+            ? now + cooldownNs : (1n << 120n);
+        }
+        throw new Error('SIGNED_FLOOR_PREPARATION_FAILED');
+      }
       const registry = createAuditedDurableChallengeRegistry(db, {
         minimumLastSeenMs: floor, maxRows, clock, ttlMs, maxPending
       });
@@ -124,6 +167,7 @@ function createPrefetchedSignedChallengeRegistry(db, {
         ? Object.freeze({ issued: false, reason: 'SIGNED_FLOOR_PREPARATION_FAILED' })
         : deny('SIGNED_FLOOR_PREPARATION_FAILED');
     } finally {
+      if (isProbe) probeInProgress = false;
       inFlight -= 1;
     }
   }
