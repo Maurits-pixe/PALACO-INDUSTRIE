@@ -3,6 +3,7 @@
 const { randomBytes } = require('node:crypto');
 const { verifySignedClockFloor } = require('./signed-clock-floor');
 const { createAuditedDurableChallengeRegistry } = require('./durable-challenge-registry');
+const { isSharedAuthorityAdmission } = require('./shared-authority-admission');
 
 const NS = /^[a-z][a-z0-9._-]{2,79}$/;
 
@@ -28,6 +29,7 @@ function createPrefetchedSignedChallengeRegistry(db, {
   floorAuthority, clock = Date.now, ttlMs = 60_000, maxPending = 128,
   maxRows = 100000, maxProofAgeMs = 5000, fetchTimeoutMs = 3000,
   maxInFlight = 16, failureThreshold = 3, cooldownMs = 30_000,
+  sharedAdmission = null,
   monotonicNow = () => process.hrtime.bigint()
 } = {}) {
   if (!floorAuthority || typeof floorAuthority !== 'object' ||
@@ -49,6 +51,7 @@ function createPrefetchedSignedChallengeRegistry(db, {
       failureThreshold > 100 ||
       !Number.isSafeInteger(cooldownMs) || cooldownMs < 1 ||
       cooldownMs > 300_000 ||
+      (sharedAdmission !== null && !isSharedAuthorityAdmission(sharedAdmission)) ||
       typeof monotonicNow !== 'function') {
     throw new TypeError('Independent signed-floor configuration required');
   }
@@ -140,6 +143,16 @@ function createPrefetchedSignedChallengeRegistry(db, {
         ? Object.freeze({ issued: false, reason: 'AUTHORITY_CLOCK_UNAVAILABLE' })
         : deny('AUTHORITY_CLOCK_UNAVAILABLE');
     }
+    // Shared per-process admission is acquired only after local circuit and
+    // capacity checks. A rejected half-open probe must release its probe lock.
+    const releaseShared = sharedAdmission === null
+      ? () => {} : sharedAdmission.acquire();
+    if (releaseShared === null) {
+      if (isProbe) probeInProgress = false;
+      return isIssue
+        ? Object.freeze({ issued: false, reason: 'SHARED_AUTHORITY_CAPACITY_REACHED' })
+        : deny('SHARED_AUTHORITY_CAPACITY_REACHED');
+    }
     inFlight += 1;
     try {
       let floor;
@@ -169,6 +182,7 @@ function createPrefetchedSignedChallengeRegistry(db, {
     } finally {
       if (isProbe) probeInProgress = false;
       inFlight -= 1;
+      releaseShared();
     }
   }
 
