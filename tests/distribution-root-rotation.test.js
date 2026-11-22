@@ -26,14 +26,15 @@ const approvals = p => [
   signature('new-root', incoming, p)
 ];
 const run = (options = {}) => {
-  const p = options.proposal ?? proposal;
-  const cp = options.checkpoint ?? checkpoint;
-  const old = options.oldRoots ?? oldRoots;
-  const next = options.newRoots ?? newRoots;
+  const supplied = (field, fallback) => Object.prototype.hasOwnProperty.call(options, field) ? options[field] : fallback;
+  const p = supplied('proposal', proposal);
+  const cp = supplied('checkpoint', checkpoint);
+  const old = supplied('oldRoots', oldRoots);
+  const next = supplied('newRoots', newRoots);
   const payload = rotationPayload(proposal, oldRoots, newRoots);
   const [a, b] = approvals(payload);
-  return assessRootRotation(p, cp, old, next, options.checkpointEndorsement ?? endorsement,
-    options.oldApproval ?? a, options.newApproval ?? b);
+  return assessRootRotation(p, cp, old, next, supplied('checkpointEndorsement', endorsement),
+    supplied('oldApproval', a), supplied('newApproval', b));
 };
 
 test('two independent signatures match without enabling rotation or release', () => {
