@@ -196,3 +196,75 @@ test('invalid fetch timeout configuration fails closed at construction', () => {
       { fetchTimeoutMs: 6000, maxProofAgeMs: 5000 }), TypeError);
   } finally { f.db.close(); }
 });
+
+test('concurrent authority fetches are capped and capacity recovers', async () => {
+  const f = fixture();
+  try {
+    let release;
+    let called = 0;
+    const gate = new Promise(resolve => { release = resolve; });
+    const r = registry(f, async nonce => {
+      called += 1;
+      await gate;
+      return floorReply(nonce);
+    }, { maxInFlight: 1, fetchTimeoutMs: 500, maxProofAgeMs: 1000 });
+    const first = r.issue('palaco.one');
+    const second = await r.issue('palaco.one');
+    assert.equal(second.issued, false);
+    assert.equal(second.reason, 'AUTHORITY_CAPACITY_REACHED');
+    assert.equal(called, 1);
+    release();
+    assert.equal((await first).issued, true);
+    assert.equal((await r.issue('palaco.one')).issued, true);
+    assert.equal(called, 2);
+  } finally { f.db.close(); }
+});
+
+test('capacity rejection on consume preserves a pending challenge', async () => {
+  const f = fixture();
+  try {
+    const ok = registry(f, nonce => floorReply(nonce));
+    const token = (await ok.issue('palaco.one')).challenge;
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    const limited = registry(f, async nonce => {
+      await gate;
+      return floorReply(nonce);
+    }, { maxInFlight: 1, fetchTimeoutMs: 500, maxProofAgeMs: 1000 });
+    const first = limited.issue('palaco.one');
+    const { state, endorsement } = receipt(token);
+    const blocked = await limited.consume('palaco.one', token, state,
+      endorsement, receiptRoots, 10);
+    assert.ok(blocked.findings.includes('AUTHORITY_CAPACITY_REACHED'));
+    assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM distribution_challenges WHERE status=?').get('pending').n, 2);
+    release();
+    await first;
+    assert.equal((await ok.consume('palaco.one', token, state,
+      endorsement, receiptRoots, 10)).readiness, 'AUTHORITY_RECEIPT_VALID');
+  } finally { f.db.close(); }
+});
+
+test('concurrency limit validates safe integer boundaries', () => {
+  const f = fixture();
+  try {
+    for (const invalid of [0, -1, 1025, NaN, 1.5, '1']) {
+      assert.throws(() => registry(f, nonce => floorReply(nonce),
+        { maxInFlight: invalid }), TypeError);
+    }
+  } finally { f.db.close(); }
+});
+
+test('failed signed-floor fetch releases concurrency slot', async () => {
+  const f = fixture();
+  try {
+    let attempts = 0;
+    const r = registry(f, nonce => {
+      attempts += 1;
+      if (attempts === 1) throw new Error('transport-failed');
+      return floorReply(nonce);
+    }, { maxInFlight: 1 });
+    assert.equal((await r.issue('palaco.one')).issued, false);
+    assert.equal((await r.issue('palaco.one')).issued, true);
+    assert.equal(attempts, 2);
+  } finally { f.db.close(); }
+});
