@@ -10,10 +10,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Root application files and tests only. Imported historical snapshots
-          # include filenames beyond the runner filesystem's component limit.
+          # Root application files, tests, and distribution modules.
+          # Avoid imported historical snapshots with overlong filenames.
           sparse-checkout: |
             tests
+            distribution
       - uses: actions/setup-node@v4
         with:
           node-version: 24
