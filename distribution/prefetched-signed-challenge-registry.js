@@ -63,7 +63,7 @@ function createPrefetchedSignedChallengeRegistry(db, {
   let blockedUntil = null;
   let probeInProgress = false;
 
-  async function prepareFloor() {
+  async function prepareFloor(onAbandoned) {
     const challenge = randomBytes(32).toString('hex');
     const start = monotonicNow();
     if (typeof start !== 'bigint') throw new Error('MONOTONIC_CLOCK_UNAVAILABLE');
@@ -73,9 +73,18 @@ function createPrefetchedSignedChallengeRegistry(db, {
     const controller = new AbortController();
     let timeout;
     let expired = false;
+    let transportSettled = false;
+    const transport = Promise.resolve().then(() =>
+      floorAuthority.fetchSignedFloor(challenge, controller.signal));
+    // Observe rejection without changing the original fetch outcome.
+    transport.then(() => { transportSettled = true; },
+      () => { transportSettled = true; });
     const timer = new Promise((_, reject) => {
       timeout = setTimeout(() => {
         expired = true;
+        // If abort is ignored, keep both local and shared permits reserved
+        // until the underlying asynchronous transport actually settles.
+        if (!transportSettled) onAbandoned(transport);
         controller.abort();
         reject(new Error('SIGNED_FLOOR_FETCH_TIMEOUT'));
       }, fetchTimeoutMs);
@@ -83,7 +92,7 @@ function createPrefetchedSignedChallengeRegistry(db, {
     let reply;
     try {
       reply = await Promise.race([
-        Promise.resolve().then(() => floorAuthority.fetchSignedFloor(challenge, controller.signal)),
+        transport,
         timer
       ]);
       if (expired) throw new Error('SIGNED_FLOOR_FETCH_TIMEOUT');
@@ -154,10 +163,11 @@ function createPrefetchedSignedChallengeRegistry(db, {
         : deny('SHARED_AUTHORITY_CAPACITY_REACHED');
     }
     inFlight += 1;
+    let abandonedTransport = null;
     try {
       let floor;
       try {
-        floor = await prepareFloor();
+        floor = await prepareFloor(transport => { abandonedTransport = transport; });
         consecutiveFailures = 0;
         blockedUntil = null;
       } catch (_) {
@@ -180,9 +190,18 @@ function createPrefetchedSignedChallengeRegistry(db, {
         ? Object.freeze({ issued: false, reason: 'SIGNED_FLOOR_PREPARATION_FAILED' })
         : deny('SIGNED_FLOOR_PREPARATION_FAILED');
     } finally {
-      if (isProbe) probeInProgress = false;
-      inFlight -= 1;
-      releaseShared();
+      const releaseCapacity = () => {
+        if (isProbe) probeInProgress = false;
+        inFlight -= 1;
+        releaseShared();
+      };
+      if (abandonedTransport !== null) {
+        // Keep capacity reserved on an uncooperative transport: capacity
+        // exhaustion is safer than claiming resources were reclaimed.
+        abandonedTransport.then(releaseCapacity, releaseCapacity);
+      } else {
+        releaseCapacity();
+      }
     }
   }
 
