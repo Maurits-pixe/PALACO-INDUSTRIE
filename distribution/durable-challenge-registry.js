@@ -1,6 +1,7 @@
 'use strict';
 const { randomBytes, createHash } = require('node:crypto');
 const { verifyAuthorityReceipt } = require('./authority-receipt');
+const { auditDurableChallengeRegistry } = require('./challenge-registry-audit');
 const NS=/^[a-z][a-z0-9._-]{2,79}$/;
 const CHALLENGE=/^[a-f0-9]{64}$/;
 function blocked(reason) {
@@ -14,7 +15,8 @@ function initializeDurableChallengeSchema(db) {
  db.exec("CREATE TABLE IF NOT EXISTS distribution_challenges (challenge_hash TEXT PRIMARY KEY,namespace TEXT NOT NULL,expires_at_ms INTEGER NOT NULL,status TEXT NOT NULL CHECK(status IN ('pending','consumed'))) STRICT");
  db.exec("CREATE INDEX IF NOT EXISTS distribution_challenges_pending ON distribution_challenges(status,expires_at_ms)");
 }
-function createDurableChallengeRegistry(db,{ttlMs=60000,maxPending=128,clock=Date.now}={}) {
+function createDurableChallengeRegistry(db,{ttlMs=60000,maxPending=128,clock=Date.now,
+   auditFloor=null,auditMaxRows=100000}={}) {
  if(!Number.isSafeInteger(ttlMs)||ttlMs<1||ttlMs>300000||
     !Number.isSafeInteger(maxPending)||maxPending<1||maxPending>4096||
     typeof clock!=='function') throw new RangeError('Invalid challenge registry configuration');
@@ -28,6 +30,11 @@ function createDurableChallengeRegistry(db,{ttlMs=60000,maxPending=128,clock=Dat
    const previous=db.prepare('SELECT last_seen_ms FROM distribution_challenge_clock WHERE singleton=1').get();
    if(previous&&(!Number.isSafeInteger(previous.last_seen_ms)||now<previous.last_seen_ms)) throw new Error('CLOCK_ROLLBACK');
    db.prepare('INSERT INTO distribution_challenge_clock(singleton,last_seen_ms) VALUES(1,?) ON CONFLICT(singleton) DO UPDATE SET last_seen_ms=excluded.last_seen_ms').run(now);
+   if (auditFloor !== null) {
+    const floor=typeof auditFloor==='function' ? auditFloor() : auditFloor;
+    const audit=auditDurableChallengeRegistry(db,{minimumLastSeenMs:floor,maxRows:auditMaxRows});
+    if(audit.readiness!=='REGISTRY_AUDIT_MATCH') throw new Error('REGISTRY_AUDIT_BLOCKED');
+   }
    const result=action(now);
    db.exec('COMMIT'); active=false;
    return result;
@@ -66,4 +73,15 @@ function createDurableChallengeRegistry(db,{ttlMs=60000,maxPending=128,clock=Dat
  }
  return Object.freeze({issue,consume});
 }
-module.exports={initializeDurableChallengeSchema,createDurableChallengeRegistry};
+/** Opt-in strict integration: the audit executes under BEGIN IMMEDIATE before
+ * issuing or consuming challenges. The external floor MUST be trusted and
+ * rollback-resistant; a caller-supplied number is not authenticated here. */
+function createAuditedDurableChallengeRegistry(db,{minimumLastSeenMs,maxRows=100000,...options}={}) {
+ if(typeof minimumLastSeenMs!=='function' &&
+    (!Number.isSafeInteger(minimumLastSeenMs)||minimumLastSeenMs<0))
+   throw new RangeError('Independent clock floor required');
+ if(!Number.isSafeInteger(maxRows)||maxRows<1||maxRows>1000000)
+   throw new RangeError('Invalid audit row limit');
+ return createDurableChallengeRegistry(db,{...options,auditFloor:minimumLastSeenMs,auditMaxRows:maxRows});
+}
+module.exports={initializeDurableChallengeSchema,createDurableChallengeRegistry,createAuditedDurableChallengeRegistry};
