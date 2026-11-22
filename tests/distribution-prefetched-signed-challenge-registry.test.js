@@ -441,3 +441,49 @@ test('forged shared admission object is rejected',()=>{
       {sharedAdmission:{acquire:()=>()=>{}}}),TypeError);
   } finally {f.db.close();}
 });
+
+test('timed-out uncooperative transport retains shared and local permits until settlement', async () => {
+  const { createSharedAuthorityAdmission } = require('../distribution/shared-authority-admission');
+  const f=fixture();
+  try {
+    const shared=createSharedAuthorityAdmission({maxInFlight:1});
+    let settle;
+    const unfinished=new Promise(resolve=>{settle=resolve;});
+    let nonce;
+    const stalled=registry(f,challenge=>{nonce=challenge;return unfinished;},
+      {sharedAdmission:shared,maxInFlight:1,fetchTimeoutMs:10,maxProofAgeMs:500});
+    const healthy=registry(f,challenge=>floorReply(challenge),
+      {sharedAdmission:shared,maxInFlight:1});
+    const rejected=await stalled.issue('palaco.one');
+    assert.equal(rejected.issued,false);
+    assert.equal(shared.snapshot().active,1);
+    assert.equal((await stalled.issue('palaco.one')).reason,'AUTHORITY_CAPACITY_REACHED');
+    assert.equal((await healthy.issue('palaco.one')).reason,'SHARED_AUTHORITY_CAPACITY_REACHED');
+    assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM distribution_challenges').get().n,1);
+    settle(floorReply(nonce));
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(shared.snapshot().active,0);
+    assert.equal((await healthy.issue('palaco.one')).issued,true);
+    // The late valid reply cannot retroactively issue another challenge.
+    assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM distribution_challenges').get().n,2);
+  } finally {f.db.close();}
+});
+
+test('late rejected transport releases a retained shared permit without unhandled errors', async () => {
+  const { createSharedAuthorityAdmission } = require('../distribution/shared-authority-admission');
+  const f=fixture();
+  try {
+    const shared=createSharedAuthorityAdmission({maxInFlight:1});
+    let reject;
+    const pending=new Promise((_,failure)=>{reject=failure;});
+    const stalled=registry(f,()=>pending,
+      {sharedAdmission:shared,fetchTimeoutMs:10,maxProofAgeMs:500});
+    assert.equal((await stalled.issue('palaco.one')).issued,false);
+    assert.equal(shared.snapshot().active,1);
+    reject(new Error('transport eventually failed'));
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(shared.snapshot().active,0);
+    assert.equal((await registry(f,nonce=>floorReply(nonce),
+      {sharedAdmission:shared}).issue('palaco.one')).issued,true);
+  } finally {f.db.close();}
+});
