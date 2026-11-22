@@ -48,10 +48,13 @@ test('corrupt registry metadata blocks issue without mutation',()=>{
 });
 test('corrupt registry blocks consuming an outstanding token',()=>{
  const {db,token,clock}=setup();try{
-  db.exec("UPDATE distribution_challenges SET status='tampered'");
+  // SQLite rejects invalid statuses itself. Corrupt an unconstrained expiry
+  // instead, to verify the independent audit blocks and preserves the token.
+  db.exec("UPDATE distribution_challenges SET expires_at_ms=-1");
   const r=createAuditedDurableChallengeRegistry(db,{minimumLastSeenMs:1000,clock});
   assert.equal(r.consume('palaco.one',token,null,null,[],0).readiness,'BLOCKED');
-  assert.equal(db.prepare('SELECT status FROM distribution_challenges').get().status,'tampered');
+  assert.equal(db.prepare('SELECT status FROM distribution_challenges').get().status,'pending');
+  assert.equal(db.prepare('SELECT expires_at_ms FROM distribution_challenges').get().expires_at_ms,-1);
  }finally{db.close();}
 });
 test('floor callback is checked anew at each transaction',()=>{
