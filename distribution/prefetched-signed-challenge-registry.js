@@ -21,11 +21,12 @@ function deny(reason) {
  * An authenticated floor is held only in a one-use closure, checked for age
  * *inside* the subsequent transaction. No fallback to unauthenticated floors.
  *
- * This module does not implement transport timeouts or rollback-proof storage.
+ * The request deadline is enforced outside the SQLite transaction. The caller
+ * must honor AbortSignal to cancel the underlying transport. No rollback-proof storage.
  */
 function createPrefetchedSignedChallengeRegistry(db, {
   floorAuthority, clock = Date.now, ttlMs = 60_000, maxPending = 128,
-  maxRows = 100000, maxProofAgeMs = 5000,
+  maxRows = 100000, maxProofAgeMs = 5000, fetchTimeoutMs = 3000,
   monotonicNow = () => process.hrtime.bigint()
 } = {}) {
   if (!floorAuthority || typeof floorAuthority !== 'object' ||
@@ -39,6 +40,8 @@ function createPrefetchedSignedChallengeRegistry(db, {
       floorAuthority.minimumEpoch < 0 ||
       !Number.isSafeInteger(maxProofAgeMs) ||
       maxProofAgeMs < 1 || maxProofAgeMs > 30_000 ||
+      !Number.isSafeInteger(fetchTimeoutMs) || fetchTimeoutMs < 1 ||
+      fetchTimeoutMs > maxProofAgeMs ||
       typeof monotonicNow !== 'function') {
     throw new TypeError('Independent signed-floor configuration required');
   }
@@ -48,8 +51,29 @@ function createPrefetchedSignedChallengeRegistry(db, {
     const challenge = randomBytes(32).toString('hex');
     const start = monotonicNow();
     if (typeof start !== 'bigint') throw new Error('MONOTONIC_CLOCK_UNAVAILABLE');
-    // This await MUST happen before the SQLite write transaction starts.
-    const reply = await floorAuthority.fetchSignedFloor(challenge);
+    // An abort signal requests transport cancellation; Promise.race bounds the
+    // caller's wait even if the remote implementation ignores that signal.
+    // This entire operation runs before BEGIN IMMEDIATE.
+    const controller = new AbortController();
+    let timeout;
+    let expired = false;
+    const timer = new Promise((_, reject) => {
+      timeout = setTimeout(() => {
+        expired = true;
+        controller.abort();
+        reject(new Error('SIGNED_FLOOR_FETCH_TIMEOUT'));
+      }, fetchTimeoutMs);
+    });
+    let reply;
+    try {
+      reply = await Promise.race([
+        Promise.resolve().then(() => floorAuthority.fetchSignedFloor(challenge, controller.signal)),
+        timer
+      ]);
+      if (expired) throw new Error('SIGNED_FLOOR_FETCH_TIMEOUT');
+    } finally {
+      clearTimeout(timeout);
+    }
     const verified = verifySignedClockFloor(
       floorAuthority.namespace, reply && reply.floor,
       reply && reply.endorsement, floorAuthority.pinnedRoots,
