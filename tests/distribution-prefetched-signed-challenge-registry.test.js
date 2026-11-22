@@ -133,7 +133,7 @@ test('stale proof is blocked by monotonic age bound', async () => {
   try {
     let now = 0n;
     const r = registry(f, async nonce => { now = 10_000_000n; return floorReply(nonce); },
-      { maxProofAgeMs: 5, monotonicNow: () => now });
+      { maxProofAgeMs: 5, fetchTimeoutMs: 5, monotonicNow: () => now });
     assert.equal((await r.issue('palaco.one')).issued, false);
   } finally { f.db.close(); }
 });
