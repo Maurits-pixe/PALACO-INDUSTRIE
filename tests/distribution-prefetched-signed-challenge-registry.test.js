@@ -268,3 +268,107 @@ test('failed signed-floor fetch releases concurrency slot', async () => {
     assert.equal(attempts, 2);
   } finally { f.db.close(); }
 });
+
+test('repeated signed-floor failures open circuit and deny without fetching', async () => {
+  const f = fixture();
+  try {
+    let calls = 0;
+    let now = 0n;
+    const r = registry(f, () => { calls += 1; throw new Error('unavailable'); },
+      { failureThreshold: 2, cooldownMs: 50, monotonicNow: () => now });
+    assert.equal((await r.issue('palaco.one')).issued, false);
+    assert.equal((await r.issue('palaco.one')).issued, false);
+    const blocked = await r.issue('palaco.one');
+    assert.equal(blocked.reason, 'AUTHORITY_CIRCUIT_OPEN');
+    assert.equal(calls, 2);
+    now = 49_000_000n;
+    assert.equal((await r.issue('palaco.one')).reason, 'AUTHORITY_CIRCUIT_OPEN');
+    assert.equal(calls, 2);
+  } finally { f.db.close(); }
+});
+
+test('half-open successful probe restores authority fetch admission', async () => {
+  const f = fixture();
+  try {
+    let calls = 0;
+    let now = 0n;
+    const r = registry(f, nonce => {
+      calls += 1;
+      if (calls === 1) throw new Error('temporary');
+      return floorReply(nonce);
+    }, { failureThreshold: 1, cooldownMs: 10, monotonicNow: () => now });
+    assert.equal((await r.issue('palaco.one')).issued, false);
+    assert.equal((await r.issue('palaco.one')).reason, 'AUTHORITY_CIRCUIT_OPEN');
+    now = 10_000_000n;
+    assert.equal((await r.issue('palaco.one')).issued, true);
+    assert.equal((await r.issue('palaco.one')).issued, true);
+    assert.equal(calls, 3);
+  } finally { f.db.close(); }
+});
+
+test('half-open probe rejects simultaneous requests without a second fetch', async () => {
+  const f = fixture();
+  try {
+    let calls = 0;
+    let now = 0n;
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    const r = registry(f, async nonce => {
+      calls += 1;
+      if (calls === 1) throw new Error('temporary');
+      await gate;
+      return floorReply(nonce);
+    }, { failureThreshold: 1, cooldownMs: 10, monotonicNow: () => now });
+    assert.equal((await r.issue('palaco.one')).issued, false);
+    now = 10_000_000n;
+    const probe = r.issue('palaco.one');
+    assert.equal((await r.issue('palaco.one')).reason, 'AUTHORITY_CIRCUIT_OPEN');
+    release();
+    assert.equal((await probe).issued, true);
+    assert.equal(calls, 2);
+  } finally { f.db.close(); }
+});
+
+test('repeated failed half-open probe renews circuit cooldown', async () => {
+  const f = fixture();
+  try {
+    let now = 0n;
+    let calls = 0;
+    const r = registry(f, () => {calls++;throw new Error('unavailable');},
+      { failureThreshold: 1, cooldownMs: 10, monotonicNow: () => now });
+    await r.issue('palaco.one');
+    now = 10_000_000n;
+    await r.issue('palaco.one');
+    now = 15_000_000n;
+    assert.equal((await r.issue('palaco.one')).reason, 'AUTHORITY_CIRCUIT_OPEN');
+    assert.equal(calls, 2);
+  } finally { f.db.close(); }
+});
+
+test('circuit breaker blocks consume without burning outstanding challenge', async () => {
+  const f = fixture();
+  try {
+    const healthy = registry(f, nonce => floorReply(nonce));
+    const token = (await healthy.issue('palaco.one')).challenge;
+    let calls = 0;
+    const broken = registry(f, () => {calls++;throw new Error('unavailable');},
+      { failureThreshold: 1 });
+    await broken.issue('palaco.one');
+    const {state,endorsement} = receipt(token);
+    const result = await broken.consume('palaco.one',token,state,endorsement,receiptRoots,10);
+    assert.ok(result.findings.includes('AUTHORITY_CIRCUIT_OPEN'));
+    assert.equal(calls,1);
+    assert.equal((await healthy.consume('palaco.one',token,state,endorsement,receiptRoots,10)).readiness,
+      'AUTHORITY_RECEIPT_VALID');
+  } finally { f.db.close(); }
+});
+
+test('circuit breaker rejects invalid thresholds and cooldown', () => {
+  const f = fixture();
+  try {
+    for (const options of [{failureThreshold:0},{failureThreshold:101},
+      {cooldownMs:0},{cooldownMs:300001},{failureThreshold:1.5}]) {
+      assert.throws(()=>registry(f,nonce=>floorReply(nonce),options),TypeError);
+    }
+  } finally { f.db.close(); }
+});
