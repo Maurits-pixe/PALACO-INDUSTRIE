@@ -157,3 +157,42 @@ test('tampered floor epoch is rejected without mutation', async () => {
     assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM distribution_challenges').get().n, 1);
   } finally { f.db.close(); }
 });
+
+test('unresponsive floor authority times out without taking SQLite writer lock', async () => {
+  const f = fixture();
+  try {
+    let cancelled = false;
+    const r = registry(f, (_nonce, signal) => {
+      signal.addEventListener('abort', () => { cancelled = true; }, { once: true });
+      return new Promise(() => {}); // Simulates a hung transport.
+    }, { fetchTimeoutMs: 10, maxProofAgeMs: 500 });
+    const result = await r.issue('palaco.one');
+    assert.equal(result.issued, false);
+    assert.equal(cancelled, true);
+    assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM distribution_challenges').get().n, 1);
+    // The timed-out request did not leave a SQLite write transaction open.
+    f.db.exec('BEGIN IMMEDIATE');
+    f.db.exec('ROLLBACK');
+  } finally { f.db.close(); }
+});
+
+test('delayed valid response beyond fetch deadline cannot create challenge', async () => {
+  const f = fixture();
+  try {
+    const r = registry(f, nonce => new Promise(resolve => {
+      setTimeout(() => resolve(floorReply(nonce)), 30);
+    }), { fetchTimeoutMs: 5, maxProofAgeMs: 500 });
+    assert.equal((await r.issue('palaco.one')).issued, false);
+    assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM distribution_challenges').get().n, 1);
+  } finally { f.db.close(); }
+});
+
+test('invalid fetch timeout configuration fails closed at construction', () => {
+  const f = fixture();
+  try {
+    assert.throws(() => registry(f, nonce => floorReply(nonce),
+      { fetchTimeoutMs: 0 }), TypeError);
+    assert.throws(() => registry(f, nonce => floorReply(nonce),
+      { fetchTimeoutMs: 6000, maxProofAgeMs: 5000 }), TypeError);
+  } finally { f.db.close(); }
+});
