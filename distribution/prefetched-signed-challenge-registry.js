@@ -27,6 +27,7 @@ function deny(reason) {
 function createPrefetchedSignedChallengeRegistry(db, {
   floorAuthority, clock = Date.now, ttlMs = 60_000, maxPending = 128,
   maxRows = 100000, maxProofAgeMs = 5000, fetchTimeoutMs = 3000,
+  maxInFlight = 16,
   monotonicNow = () => process.hrtime.bigint()
 } = {}) {
   if (!floorAuthority || typeof floorAuthority !== 'object' ||
@@ -42,10 +43,14 @@ function createPrefetchedSignedChallengeRegistry(db, {
       maxProofAgeMs < 1 || maxProofAgeMs > 30_000 ||
       !Number.isSafeInteger(fetchTimeoutMs) || fetchTimeoutMs < 1 ||
       fetchTimeoutMs > maxProofAgeMs ||
+      !Number.isSafeInteger(maxInFlight) || maxInFlight < 1 ||
+      maxInFlight > 1024 ||
       typeof monotonicNow !== 'function') {
     throw new TypeError('Independent signed-floor configuration required');
   }
   const maxAgeNs = BigInt(maxProofAgeMs) * 1000000n;
+  // Local-process admission control; no global/distributed resource guarantee.
+  let inFlight = 0;
 
   async function prepareFloor() {
     const challenge = randomBytes(32).toString('hex');
@@ -100,6 +105,14 @@ function createPrefetchedSignedChallengeRegistry(db, {
   }
 
   async function guarded(operation, args, isIssue) {
+    // Admission is synchronous, before the first await, so competing calls
+    // cannot oversubscribe this registry instance's authority fetch budget.
+    if (inFlight >= maxInFlight) {
+      return isIssue
+        ? Object.freeze({ issued: false, reason: 'AUTHORITY_CAPACITY_REACHED' })
+        : deny('AUTHORITY_CAPACITY_REACHED');
+    }
+    inFlight += 1;
     try {
       const floor = await prepareFloor();
       const registry = createAuditedDurableChallengeRegistry(db, {
@@ -110,6 +123,8 @@ function createPrefetchedSignedChallengeRegistry(db, {
       return isIssue
         ? Object.freeze({ issued: false, reason: 'SIGNED_FLOOR_PREPARATION_FAILED' })
         : deny('SIGNED_FLOOR_PREPARATION_FAILED');
+    } finally {
+      inFlight -= 1;
     }
   }
 
