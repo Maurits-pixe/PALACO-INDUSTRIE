@@ -29,6 +29,13 @@ function createDurableChallengeRegistry(db,{ttlMs=60000,maxPending=128,clock=Dat
    if(!Number.isSafeInteger(now)||now<0||now>Number.MAX_SAFE_INTEGER-ttlMs) throw new Error('INVALID_TIME');
    const previous=db.prepare('SELECT last_seen_ms FROM distribution_challenge_clock WHERE singleton=1').get();
    if(previous&&(!Number.isSafeInteger(previous.last_seen_ms)||now<previous.last_seen_ms)) throw new Error('CLOCK_ROLLBACK');
+   // Compare the STORED clock against the independent floor BEFORE updating it.
+   // Otherwise a restored older DB would be concealed by the current wall clock.
+   if(auditFloor!==null) {
+    const floor=typeof auditFloor==='function' ? auditFloor() : auditFloor;
+    if(!Number.isSafeInteger(floor)||floor<0||!previous||previous.last_seen_ms<floor)
+      throw new Error('CLOCK_FLOOR_MISMATCH');
+   }
    db.prepare('INSERT INTO distribution_challenge_clock(singleton,last_seen_ms) VALUES(1,?) ON CONFLICT(singleton) DO UPDATE SET last_seen_ms=excluded.last_seen_ms').run(now);
    if (auditFloor !== null) {
     const floor=typeof auditFloor==='function' ? auditFloor() : auditFloor;
