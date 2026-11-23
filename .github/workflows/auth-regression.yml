@@ -53,3 +53,28 @@ jobs:
       # runtime dependencies and lockfiles are unchanged.
       - run: npm install --no-save --no-package-lock --ignore-scripts pg@8.16.3
       - run: node --test tests/postgres-live-continuity.test.js
+      - name: Prepare committed continuity high-watermark
+        env:
+          PALACO_TEST_PHASE: prepare
+        run: node --test tests/postgres-crash-recovery.test.js
+      - name: Abruptly terminate and restart isolated PostgreSQL 17
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t ids < <(docker ps --filter "ancestor=postgres:17" --format '{{.ID}}')
+          test "${#ids[@]}" -eq 1
+          docker kill --signal=KILL "${ids[0]}"
+          docker start "${ids[0]}"
+          ready=0
+          for attempt in $(seq 1 45); do
+            if pg_isready -h 127.0.0.1 -p 5432 -U palaco_ci -d palaco_continuity_ci >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" -eq 1
+      - name: Verify recovery and reject regression
+        env:
+          PALACO_TEST_PHASE: verify
+        run: node --test tests/postgres-crash-recovery.test.js
