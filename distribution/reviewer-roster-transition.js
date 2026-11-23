@@ -1,6 +1,7 @@
 'use strict';
 
 const {createPublicKey,verify,createHash}=require('node:crypto');
+const {verifyRosterAuthorityRotation}=require('./roster-authority-rotation');
 
 const NS=/^[a-z][a-z0-9._-]{2,79}$/;
 const ID=/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
@@ -109,4 +110,29 @@ function verifyReviewerRosterTransition(previous,next,endorsement,options={}) {
     findings:Object.freeze([])
   });
 }
-module.exports={VERSION,rosterPayload,rosterDigest,verifyReviewerRosterTransition};
+/**
+ * Explicit stronger mode: reviewer roster's authority key is taken only
+ * from a verified old/new authority rotation (never untrusted pinnedRoots
+ * from the caller's options). The independent rotation anchor stays required.
+ */
+function verifyRotationBoundReviewerRosterTransition(previous,next,endorsement,
+  options,rotationEvidence){
+  if(!rotationEvidence||typeof rotationEvidence!=='object'||
+     Array.isArray(rotationEvidence))return deny('AUTHORITY_ROTATION_EVIDENCE_MISSING');
+  const proof=verifyRosterAuthorityRotation(
+    rotationEvidence.previous,rotationEvidence.next,rotationEvidence.record,
+    rotationEvidence.endorsements,rotationEvidence.anchor);
+  if(proof.readiness!=='AUTHORITY_ROTATION_VERIFIED_NON_AUTHORIZING')
+    return deny('AUTHORITY_ROTATION_EVIDENCE_REJECTED');
+  if(!options||typeof options!=='object'||Array.isArray(options)||
+     options.namespace!==rotationEvidence.anchor.namespace||
+     options.namespace!==rotationEvidence.next.namespace)
+    return deny('AUTHORITY_ROTATION_NAMESPACE_MISMATCH');
+  // The only accepted signer is the verified proposed authority.
+  return verifyReviewerRosterTransition(previous,next,endorsement,{
+    ...options,pinnedRoots:[{...proof.proposedAuthority,
+      enabled:true,revoked:false}]
+  });
+}
+module.exports={VERSION,rosterPayload,rosterDigest,verifyReviewerRosterTransition,
+  verifyRotationBoundReviewerRosterTransition};
