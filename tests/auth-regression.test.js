@@ -15,6 +15,8 @@ async function startServer(t, env = {}) {
   let githubUnavailable = false;
   const context = vm.createContext({
     require(name) {
+      if (name === "./distribution/application-challenge-http")
+        return require("../distribution/application-challenge-http");
       if (name !== "node:http") return require(name);
       return { ...http, createServer(handler) {
         server = http.createServer(handler);
@@ -189,3 +191,41 @@ for (const [name, env, secure] of [
     }
   });
 }
+
+
+test("distribution HTTP perimeter enforces session, CSRF, and trust-disabled HOLD", async t => {
+  const server = await startServer(t);
+  const client = browser(server);
+  const issue = "/api/distribution/challenges/issue";
+  const consume = "/api/distribution/challenges/consume";
+  const absent = await client.fetch(issue,{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({namespace:"palaco.one"})});
+  assert.equal(absent.status,401);
+  assert.equal((await absent.json()).authorization,"DENY");
+
+  const registration = await signup(client);
+  const {csrfToken}=await registration.json();
+  const noCsrf = await client.fetch(issue,{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({namespace:"palaco.one"})});
+  assert.equal(noCsrf.status,403);
+  const wrongCsrf = await client.fetch(consume,{method:"POST",
+    headers:{"X-CSRF-Token":"wrong","Content-Type":"application/json"},
+    body:JSON.stringify({namespace:"palaco.one"})});
+  assert.equal(wrongCsrf.status,403);
+  for (const url of [issue,consume]){
+    const response=await client.fetch(url,{method:"POST",
+      headers:{"X-CSRF-Token":csrfToken,"Content-Type":"application/json"},
+      body:JSON.stringify({namespace:"palaco.one",bypassCheckpoint:true})});
+    assert.equal(response.status,503);
+    const payload=await response.json();
+    assert.equal(payload.error,"DISTRIBUTION_TRUST_NOT_CONFIGURED");
+    assert.equal(payload.authorization,"DENY");
+    assert.equal(payload.go13,"HOLD");
+    assert.equal(payload.mayPublish,false);
+  }
+  const alternate=await client.fetch("/api/distribution/challenges/issue/",{method:"POST",
+    headers:{"X-CSRF-Token":csrfToken}});
+  assert.equal(alternate.status,404);
+  const wrongMethod=await client.fetch(issue,{method:"GET"});
+  assert.equal(wrongMethod.status,405);
+});
