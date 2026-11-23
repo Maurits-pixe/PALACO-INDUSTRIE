@@ -538,3 +538,86 @@ test('signed continuity rejects a forged monitor at construction',()=>{
     }),TypeError);
   } finally {f.db.close();}
 });
+
+test('independent continuity survives new registry instance in simulated external store',async()=>{
+ const {createIndependentContinuityAuthority}=require('../distribution/independent-continuity-authority');
+ const {createIndependentlyGuardedChallengeRegistry}=require('../distribution/prefetched-signed-challenge-registry');
+ const f=fixture();try{
+  let persisted={epoch:0,floor:0};
+  const authority=createIndependentContinuityAuthority({namespace:'palaco.registry',
+   compareAndAdvance:async (_namespace,epoch,floor)=>{
+    if(epoch<persisted.epoch||floor<persisted.floor)return false;
+    persisted={epoch,floor};return true;
+   }});
+  const build=(epoch,bound)=>createIndependentlyGuardedChallengeRegistry(f.db,{
+   clock:f.clock,independentContinuity:authority,floorAuthority:{
+    ...authorityForTest(nonce=>floorReply(nonce,{epoch,minimumLastSeenMs:bound}))
+   }});
+  function authorityForTest(fetchSignedFloor){return {
+   namespace:'palaco.registry',minimumEpoch:5,pinnedRoots:roots,fetchSignedFloor};}
+  assert.equal((await build(7,1000).issue('palaco.one')).issued,true);
+  assert.deepEqual(persisted,{epoch:7,floor:1000});
+  // New process-like instance has fresh local continuity, same simulated external store.
+  assert.equal((await build(6,1000).issue('palaco.one')).issued,false);
+  assert.equal(f.db.prepare('SELECT COUNT(*) n FROM distribution_challenges').get().n,2);
+  assert.equal((await build(8,1000).issue('palaco.one')).issued,true);
+ }finally{f.db.close();}
+});
+
+test('strict durable factory refuses missing, forged and mismatched authority',()=>{
+ const {createIndependentContinuityAuthority}=require('../distribution/independent-continuity-authority');
+ const {createIndependentlyGuardedChallengeRegistry}=require('../distribution/prefetched-signed-challenge-registry');
+ const f=fixture();try{
+  const config={clock:f.clock,floorAuthority:authority(nonce=>floorReply(nonce))};
+  assert.throws(()=>createIndependentlyGuardedChallengeRegistry(f.db,config),TypeError);
+  assert.throws(()=>createIndependentlyGuardedChallengeRegistry(f.db,{
+   ...config,independentContinuity:{advance:async()=>true,namespace:'palaco.registry'}
+  }),TypeError);
+  assert.throws(()=>createIndependentlyGuardedChallengeRegistry(f.db,{
+   ...config,independentContinuity:createIndependentContinuityAuthority({
+    namespace:'other.registry',compareAndAdvance:async()=>true})
+  }),TypeError);
+ }finally{f.db.close();}
+});
+
+test('independent continuity backend refusal prevents challenge issue and consume',async()=>{
+ const {createIndependentContinuityAuthority}=require('../distribution/independent-continuity-authority');
+ const {createIndependentlyGuardedChallengeRegistry}=require('../distribution/prefetched-signed-challenge-registry');
+ const f=fixture();try{
+  const initial=registry(f,nonce=>floorReply(nonce));
+  const token=(await initial.issue('palaco.one')).challenge;
+  const independentContinuity=createIndependentContinuityAuthority({
+   namespace:'palaco.registry',compareAndAdvance:async()=>false});
+  const strict=createIndependentlyGuardedChallengeRegistry(f.db,{
+   clock:f.clock,independentContinuity,floorAuthority:authority(nonce=>floorReply(nonce))});
+  assert.equal((await strict.issue('palaco.one')).issued,false);
+  const {state,endorsement}=receipt(token);
+  const consumed=await strict.consume('palaco.one',token,state,endorsement,receiptRoots,10);
+  assert.equal(consumed.readiness,'BLOCKED');
+  assert.equal(f.db.prepare("SELECT COUNT(*) n FROM distribution_challenges WHERE status='consumed'").get().n,0);
+ }finally{f.db.close();}
+});
+
+test('hung independent authority retains permits until underlying call settles',async()=>{
+ const {createIndependentContinuityAuthority}=require('../distribution/independent-continuity-authority');
+ const {createSharedAuthorityAdmission}=require('../distribution/shared-authority-admission');
+ const {createIndependentlyGuardedChallengeRegistry}=require('../distribution/prefetched-signed-challenge-registry');
+ const f=fixture();try{
+  let finish;
+  const hanging=new Promise(resolve=>{finish=resolve;});
+  const shared=createSharedAuthorityAdmission({maxInFlight:1});
+  const independentContinuity=createIndependentContinuityAuthority({
+   namespace:'palaco.registry',compareAndAdvance:()=>hanging});
+  const strict=createIndependentlyGuardedChallengeRegistry(f.db,{
+   clock:f.clock,fetchTimeoutMs:10,maxProofAgeMs:500,sharedAdmission:shared,
+   independentContinuity,floorAuthority:authority(nonce=>floorReply(nonce))});
+  assert.equal((await strict.issue('palaco.one')).issued,false);
+  assert.equal(shared.snapshot().active,1);
+  const healthy=registry(f,nonce=>floorReply(nonce),{sharedAdmission:shared});
+  assert.equal((await healthy.issue('palaco.one')).reason,'SHARED_AUTHORITY_CAPACITY_REACHED');
+  finish(true);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(shared.snapshot().active,0);
+  assert.equal(f.db.prepare('SELECT COUNT(*) n FROM distribution_challenges').get().n,1);
+ }finally{f.db.close();}
+});
