@@ -89,7 +89,8 @@ test('chain predecessor digest is cryptographically bound',()=>{
 });
 
 test('malformed payload cannot be hashed or verified',()=>{
-  const f=fixture({sequence:0});
+  const f=fixture();
+  f.checkpoint.sequence=0;
   assert.equal(checkpointPayload(f.checkpoint),null);
   assert.equal(checkpointDigest(f.checkpoint),null);
   assert.equal(check(f).readiness,'BLOCKED');
