@@ -6,6 +6,8 @@ const {authorityDigest,rotationPayload}=
   require('../distribution/roster-authority-rotation');
 const {rosterPayload,rosterDigest,verifyRotationBoundReviewerRosterTransition}=
   require('../distribution/reviewer-roster-transition');
+const {dossierPayload,verifyRosterBoundBootstrapDossier}=
+  require('../distribution/bootstrap-review-dossier');
 
 function fixture(){
  const keys=Array.from({length:6},()=>generateKeyPairSync('ed25519'));
@@ -79,4 +81,32 @@ test('missing independent reviewer cosignature blocks new signing authority',()=
 test('rotated authority cannot be replayed into another namespace',()=>{
  const f=fixture();f.options.namespace='other.registry';
  assert.deepEqual(check(f).findings,['AUTHORITY_ROTATION_NAMESPACE_MISMATCH']);
+});
+
+test('bootstrap reviewer quorum inherits only rotation-attested roster identities',()=>{
+ const f=fixture();
+ const dossier={
+  schemaVersion:'palaco.distribution.bootstrap-dossier.v1',
+  namespace:'palaco.registry',sequence:20,issuedAtMs:1000,expiresAtMs:5000,
+  sourceDigest:'a'.repeat(64),checkpointDigest:'b'.repeat(64),
+  anchorDigest:'c'.repeat(64),postgresSchemaDigest:'d'.repeat(64),
+  pinnedRootsDigest:rosterDigest(f.next),authorization:'DENY',go13:'HOLD'
+ };
+ const endorsements=[
+  f.approval(4,'key-alice',dossierPayload(dossier)),
+  f.approval(5,'key-bob',dossierPayload(dossier))
+ ];
+ const policy={namespace:'palaco.registry',minimumSequence:20,nowMs:2000,
+  pinnedReviewRoots:[{keyId:'forged',reviewerId:'forged',enabled:true,revoked:false,
+    publicKeyPem:f.keys[0].publicKey.export({type:'spki',format:'pem'})}]};
+ const rosterEvidence={previous:f.previous,next:f.next,
+  endorsement:f.endorsement,anchor:f.options,
+  authorityRotation:f.rotationEvidence};
+ const verified=verifyRosterBoundBootstrapDossier(dossier,endorsements,
+  policy,rosterEvidence);
+ assert.deepEqual(verified.findings,['BOOTSTRAP_EVIDENCE_VERIFIED_NO_RELEASE_AUTHORITY']);
+ assert.equal(verified.authorization,'DENY');
+ f.rotationEvidence.endorsements.reviewers.pop();
+ assert.deepEqual(verifyRosterBoundBootstrapDossier(dossier,endorsements,
+  policy,rosterEvidence).findings,['BOOTSTRAP_ROSTER_TRANSITION_REJECTED']);
 });
