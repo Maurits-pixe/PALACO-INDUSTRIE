@@ -3,6 +3,7 @@
 // Read-only, operator-reviewed bootstrap dossier verifier.
 // This is diagnostic evidence, NOT an enabling capability or a trust service.
 const {createPublicKey,verify,createHash} = require('node:crypto');
+const {verifyReviewerRosterTransition}=require('./reviewer-roster-transition');
 const HEX=/^[a-f0-9]{64}$/;
 const ID=/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
 const NS=/^[a-z][a-z0-9._-]{2,79}$/;
@@ -90,4 +91,29 @@ function verifyBootstrapDossier(dossier,endorsements,{
   // Even valid two-person approval is evidence only, never deployment authority.
   return deny(['BOOTSTRAP_EVIDENCE_VERIFIED_NO_RELEASE_AUTHORITY'],digest);
 }
-module.exports={VERSION,dossierPayload,verifyBootstrapDossier};
+/**
+ * Opt-in provenance-bound verification. Never treat unverified caller roots as
+ * authoritative when a signed roster lineage is expected.
+ * The separate roster authority anchor must be provided out of band.
+ */
+function verifyRosterBoundBootstrapDossier(dossier,endorsements,reviewPolicy,
+  rosterEvidence) {
+  if(!rosterEvidence||typeof rosterEvidence!=='object'||Array.isArray(rosterEvidence))
+    return deny(['BOOTSTRAP_ROSTER_EVIDENCE_MISSING']);
+  const transition=verifyReviewerRosterTransition(
+    rosterEvidence.previous,rosterEvidence.next,rosterEvidence.endorsement,
+    rosterEvidence.anchor);
+  if(transition.readiness!=='ROSTER_TRANSITION_VERIFIED_NON_AUTHORIZING')
+    return deny(['BOOTSTRAP_ROSTER_TRANSITION_REJECTED']);
+  if(!dossier||dossier.pinnedRootsDigest!==transition.digest)
+    return deny(['BOOTSTRAP_ROSTER_DIGEST_MISMATCH']);
+  if(!reviewPolicy||typeof reviewPolicy!=='object'||Array.isArray(reviewPolicy)||
+     reviewPolicy.namespace!==rosterEvidence.anchor.namespace)
+    return deny(['BOOTSTRAP_ROSTER_SCOPE_MISMATCH']);
+  // Do not let a caller override the roots extracted from the signed roster.
+  return verifyBootstrapDossier(dossier,endorsements,{
+    ...reviewPolicy,pinnedReviewRoots:transition.reviewRoots
+  });
+}
+module.exports={VERSION,dossierPayload,verifyBootstrapDossier,
+  verifyRosterBoundBootstrapDossier};
