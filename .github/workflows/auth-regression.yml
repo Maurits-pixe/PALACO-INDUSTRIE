@@ -53,6 +53,8 @@ jobs:
       # runtime dependencies and lockfiles are unchanged.
       - run: npm install --no-save --no-package-lock --ignore-scripts pg@8.16.3
       - run: node --test tests/postgres-live-continuity.test.js
+      - name: Verify signed external checkpoint against PostgreSQL rollback
+        run: node --test tests/postgres-checkpoint-verification.test.js
       - name: Reject restored SQLite backup against independent PostgreSQL witness
         run: node --test tests/postgres-independent-rollback-rejection.test.js
       - name: Test restricted PostgreSQL runtime role
