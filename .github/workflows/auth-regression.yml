@@ -63,6 +63,12 @@ jobs:
         run: node --test tests/postgres-independent-rollback-rejection.test.js
       - name: Test restricted PostgreSQL runtime role
         run: node --test tests/postgres-runtime-privileges.test.js
+      - name: Test restricted authority anchor runtime role
+        run: node --test tests/postgres-authority-anchor-privileges.test.js
+      - name: Prepare persistent authority head before crash
+        env:
+          PALACO_TEST_PHASE: prepare
+        run: node --test tests/postgres-authority-anchor-crash-recovery.test.js
       - name: Prepare committed continuity high-watermark
         env:
           PALACO_TEST_PHASE: prepare
@@ -88,3 +94,7 @@ jobs:
         env:
           PALACO_TEST_PHASE: verify
         run: node --test tests/postgres-crash-recovery.test.js
+      - name: Verify durable authority head after abrupt PostgreSQL restart
+        env:
+          PALACO_TEST_PHASE: verify
+        run: node --test tests/postgres-authority-anchor-crash-recovery.test.js
