@@ -154,7 +154,7 @@ test('checkpoint gate enforces timeout while retaining underlying permit',async(
   });
   assert.equal((await r.issue('palaco.one')).issued,false);
   assert.equal(sharedAdmission.snapshot().active,1);
-  assert.equal((await r.issue('palaco.one')).reason,'AUTHORITY_CAPACITY_REACHED');
+  assert.equal((await r.issue('palaco.one')).reason,'SHARED_AUTHORITY_CAPACITY_REACHED');
   settle(null);
   await new Promise(resolve=>setImmediate(resolve));
   assert.equal(sharedAdmission.snapshot().active,0);
