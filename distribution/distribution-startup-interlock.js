@@ -57,7 +57,7 @@ function createDistributionStartupInterlock(environment={}, reviewEvidence=null)
   const findings=Object.freeze([
     ...(attempts.length ? ['UNAUTHORIZED_DISTRIBUTION_STARTUP_OVERRIDE'] : []),
     ...(evidenceFinding ? [evidenceFinding] :
-      ['INDEPENDENT_DISTRIBUTION_TRUST_NOT_PROVISIONED'])
+      attempts.length ? [] : ['INDEPENDENT_DISTRIBUTION_TRUST_NOT_PROVISIONED'])
   ]);
   const report=Object.freeze({
     schemaVersion:'palaco.distribution.startup-interlock.v1',
