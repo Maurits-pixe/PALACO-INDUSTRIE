@@ -621,3 +621,52 @@ test('hung independent authority retains permits until underlying call settles',
   assert.equal(f.db.prepare('SELECT COUNT(*) n FROM distribution_challenges').get().n,1);
  }finally{f.db.close();}
 });
+
+test('PostgreSQL continuity adapter composes with strict registry and denies rollback',async()=>{
+ const {createPostgresIndependentContinuity}=
+   require('../distribution/postgres-independent-continuity');
+ const {createIndependentlyGuardedChallengeRegistry}=
+   require('../distribution/prefetched-signed-challenge-registry');
+ const f=fixture();try{
+  let stored={epoch:5,floor:1000};
+  const query=async request=>{
+    const [scope,epoch,floor]=request.values;
+    if(scope!=='palaco.registry'||epoch<stored.epoch||floor<stored.floor)
+      return {rowCount:0,rows:[]};
+    stored={epoch,floor};
+    return {rowCount:1,rows:[{epoch:String(epoch),minimum_last_seen_ms:String(floor)}]};
+  };
+  const independentContinuity=createPostgresIndependentContinuity({
+    namespace:'palaco.registry',query
+  });
+  const make=(epoch,floor)=>createIndependentlyGuardedChallengeRegistry(f.db,{
+    clock:f.clock,independentContinuity,
+    floorAuthority:authority(nonce=>floorReply(nonce,{epoch,minimumLastSeenMs:floor}))
+  });
+  assert.equal((await make(7,1000).issue('palaco.one')).issued,true);
+  assert.equal((await make(6,1000).issue('palaco.one')).issued,false);
+  assert.equal((await make(8,999).issue('palaco.one')).issued,false);
+  assert.equal((await make(8,1000).issue('palaco.one')).issued,true);
+  assert.deepEqual(stored,{epoch:8,floor:1000});
+  assert.equal(f.db.prepare('SELECT COUNT(*) n FROM distribution_challenges').get().n,3);
+ }finally{f.db.close();}
+});
+
+test('PostgreSQL adapter rejects missing provisioned row without SQLite mutation',async()=>{
+ const {createPostgresIndependentContinuity}=
+   require('../distribution/postgres-independent-continuity');
+ const {createIndependentlyGuardedChallengeRegistry}=
+   require('../distribution/prefetched-signed-challenge-registry');
+ const f=fixture();try{
+  const independentContinuity=createPostgresIndependentContinuity({
+    namespace:'palaco.registry',query:async()=>({rowCount:0,rows:[]})
+  });
+  const strict=createIndependentlyGuardedChallengeRegistry(f.db,{
+    clock:f.clock,independentContinuity,
+    floorAuthority:authority(nonce=>floorReply(nonce))
+  });
+  assert.equal((await strict.issue('palaco.one')).issued,false);
+  assert.equal(f.db.prepare('SELECT COUNT(*) n FROM distribution_challenges').get().n,1);
+  assert.equal(f.db.prepare('SELECT last_seen_ms FROM distribution_challenge_clock').get().last_seen_ms,1000);
+ }finally{f.db.close();}
+});
