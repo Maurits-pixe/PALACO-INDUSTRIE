@@ -27,7 +27,7 @@ function sample(){
   minimumRevision:9,previousDigest:rosterDigest(previous)};
  const endorse=(value=next)=>({
   algorithm:'Ed25519',keyId:'roster-root',
-  signature:sign(null,rosterPayload(value),trust.privateKey).toString('base64')
+  signature:sign(null,rosterPayload(value)||rosterPayload(previous),trust.privateKey).toString('base64')
  });
  return {previous,next,roots,options,endorse};
 }
