@@ -5,6 +5,7 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const { DatabaseSync } = require("node:sqlite");
 const { dispatchDistributionHttp } = require("./distribution/application-challenge-http");
+const { createDistributionStartupInterlock } = require("./distribution/distribution-startup-interlock");
 
 const HOST = process.env.HOST || "0.0.0.0";
 const PORT = Number(process.env.PORT || 3000);
@@ -52,6 +53,7 @@ const CONTENT_TYPES = {
 const THEMES = new Set(["light", "sunrise", "forest", "midnight"]);
 
 let database;
+const distributionStartup = createDistributionStartupInterlock(process.env);
 
 const defaultMessages = (name = "there") => [
   {
@@ -1187,7 +1189,7 @@ const server = http.createServer(async (request, response) => {
         path: pathname,
         authenticated: Boolean(auth),
         csrfValid: Boolean(auth && verifyCsrfToken(request, auth.session)),
-        ingress: null,
+        ingress: distributionStartup.ingress,
         readBody: () => readRequestBody(request)
       });
       sendJson(response, result.status, result.payload);
