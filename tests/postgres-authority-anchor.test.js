@@ -59,14 +59,16 @@ test('unavailable, malformed or stale anchor rejects every rotation',async()=>{
   assert.equal(verified.go13,'HOLD');
  }
 });
-test('independent anchor adapter refuses bad CAS values before network I/O',async()=>{
+test('arbitrary authority digest writes are not available to application callers',async()=>{
  let calls=0;
  const store=createAuthorityAnchorStore({namespace:'palaco.registry',
   query:async()=>{calls++;return {rowCount:0,rows:[]};}});
- assert.equal(await store.compareAndAdvance(10,'a'.repeat(64),12,'b'.repeat(64)),false);
- assert.equal(await store.compareAndAdvance(10,'a'.repeat(64),11,'a'.repeat(64)),false);
- assert.equal(await store.compareAndAdvance(-1,'a'.repeat(64),0,'b'.repeat(64)),false);
- assert.equal(calls,0);
+ assert.equal(Object.hasOwn(store,'compareAndAdvance'),false);
+ assert.equal(typeof store.advanceVerified,'function');
+ const f=fixture();
+ assert.equal(await store.advanceVerified(f.previous,f.next,f.record,
+   f.endorsements,f.reviewers),false);
+ assert.equal(calls,1);
 });
 test('trusted read-only proof does not advance or grant release authority',async()=>{
  const f=fixture(),queries=[];
@@ -104,9 +106,11 @@ test('disposable live PostgreSQL advances independently and rejects historical r
    f.record,f.endorsements,f.reviewers);
   assert.equal(proof.readiness,'ANCHOR_MATCH_VERIFIED_NON_AUTHORIZING');
   assert.equal(proof.authorization,'DENY');
-  assert.equal(await store.compareAndAdvance(10,oldDigest,11,newDigest),true);
+  assert.equal(await store.advanceVerified(f.previous,f.next,f.record,
+    f.endorsements,f.reviewers),true);
   assert.deepEqual(await store.latest(),{revision:11,digest:newDigest});
-  assert.equal(await store.compareAndAdvance(10,oldDigest,11,newDigest),false);
+  assert.equal(await store.advanceVerified(f.previous,f.next,f.record,
+    f.endorsements,f.reviewers),false);
   const replay=await verifyAnchoredAuthorityRotation(store,f.previous,f.next,
    f.record,f.endorsements,f.reviewers);
   assert.deepEqual(replay.findings,['AUTHORITY_INDEPENDENT_HEAD_MISMATCH']);
