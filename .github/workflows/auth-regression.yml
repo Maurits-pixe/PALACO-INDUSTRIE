@@ -20,3 +20,36 @@ jobs:
           node-version: 24
       - run: npm run check
       - run: npm test
+
+  postgres-continuity-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: palaco_ci
+          POSTGRES_PASSWORD: local_ci_only
+          POSTGRES_DB: palaco_continuity_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U palaco_ci -d palaco_continuity_ci"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      PALACO_TEST_POSTGRES: "1"
+      PALACO_TEST_DATABASE_URL: postgresql://palaco_ci:local_ci_only@127.0.0.1:5432/palaco_continuity_ci
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            tests
+            distribution
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      # Only the disposable CI job installs a test driver; production
+      # runtime dependencies and lockfiles are unchanged.
+      - run: npm install --no-save --no-package-lock --ignore-scripts pg@8.16.3
+      - run: node --test tests/postgres-live-continuity.test.js
