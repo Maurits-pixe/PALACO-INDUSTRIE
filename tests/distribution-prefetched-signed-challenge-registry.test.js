@@ -487,3 +487,54 @@ test('late rejected transport releases a retained shared permit without unhandle
       {sharedAdmission:shared}).issue('palaco.one')).issued,true);
   } finally {f.db.close();}
 });
+
+test('previously accepted higher signed floor prevents a later signed regression', async () => {
+  const f=fixture();
+  try {
+    let bound=1000;
+    const r=registry(f,nonce=>floorReply(nonce,{minimumLastSeenMs:bound}));
+    assert.equal((await r.issue('palaco.one')).issued,true);
+    bound=999;
+    assert.equal((await r.issue('palaco.one')).issued,false);
+    assert.equal(f.db.prepare('SELECT COUNT(*) n FROM distribution_challenges').get().n,2);
+    bound=1000;
+    assert.equal((await r.issue('palaco.one')).issued,true);
+  } finally {f.db.close();}
+});
+
+test('signed floor epoch may not regress after higher signed epoch even with valid signature', async () => {
+  const f=fixture();
+  try {
+    let epoch=6;
+    const r=registry(f,nonce=>floorReply(nonce,{epoch}));
+    assert.equal((await r.issue('palaco.one')).issued,true);
+    epoch=5; // Still meets the independently configured minimum epoch.
+    assert.equal((await r.issue('palaco.one')).issued,false);
+    assert.equal(f.db.prepare('SELECT COUNT(*) n FROM distribution_challenges').get().n,2);
+  } finally {f.db.close();}
+});
+
+test('shared continuity prevents separate registry instances from accepting stale signer', async () => {
+  const {createSignedFloorContinuity} = require('../distribution/signed-floor-continuity');
+  const f=fixture();
+  try {
+    const continuity=createSignedFloorContinuity();
+    const a=registry(f,nonce=>floorReply(nonce,{epoch:7,minimumLastSeenMs:1000}),
+      {signedFloorContinuity:continuity});
+    const b=registry(f,nonce=>floorReply(nonce,{epoch:6,minimumLastSeenMs:1000}),
+      {signedFloorContinuity:continuity});
+    assert.equal((await a.issue('palaco.one')).issued,true);
+    assert.equal((await b.issue('palaco.one')).issued,false);
+    assert.deepEqual(continuity.snapshot(),{epoch:7,minimumLastSeenMs:1000});
+    assert.equal(f.db.prepare('SELECT COUNT(*) n FROM distribution_challenges').get().n,2);
+  } finally {f.db.close();}
+});
+
+test('signed continuity rejects a forged monitor at construction',()=>{
+  const f=fixture();
+  try {
+    assert.throws(()=>registry(f,nonce=>floorReply(nonce),{
+      signedFloorContinuity:{observe:()=>true}
+    }),TypeError);
+  } finally {f.db.close();}
+});
