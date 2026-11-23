@@ -5,6 +5,7 @@ const { verifySignedClockFloor } = require('./signed-clock-floor');
 const { createAuditedDurableChallengeRegistry } = require('./durable-challenge-registry');
 const { isSharedAuthorityAdmission } = require('./shared-authority-admission');
 const { createSignedFloorContinuity, isSignedFloorContinuity } = require('./signed-floor-continuity');
+const { isIndependentContinuityAuthority } = require('./independent-continuity-authority');
 
 const NS = /^[a-z][a-z0-9._-]{2,79}$/;
 
@@ -31,6 +32,7 @@ function createPrefetchedSignedChallengeRegistry(db, {
   maxRows = 100000, maxProofAgeMs = 5000, fetchTimeoutMs = 3000,
   maxInFlight = 16, failureThreshold = 3, cooldownMs = 30_000,
   sharedAdmission = null, signedFloorContinuity = null,
+  independentContinuity = null,
   monotonicNow = () => process.hrtime.bigint()
 } = {}) {
   if (!floorAuthority || typeof floorAuthority !== 'object' ||
@@ -54,6 +56,9 @@ function createPrefetchedSignedChallengeRegistry(db, {
       cooldownMs > 300_000 ||
       (sharedAdmission !== null && !isSharedAuthorityAdmission(sharedAdmission)) ||
       (signedFloorContinuity !== null && !isSignedFloorContinuity(signedFloorContinuity)) ||
+      (independentContinuity !== null &&
+       (!isIndependentContinuityAuthority(independentContinuity) ||
+        independentContinuity.namespace !== floorAuthority.namespace)) ||
       typeof monotonicNow !== 'function') {
     throw new TypeError('Independent signed-floor configuration required');
   }
@@ -113,6 +118,39 @@ function createPrefetchedSignedChallengeRegistry(db, {
     const end = monotonicNow();
     if (typeof end !== 'bigint' || end < start || end - start > maxAgeNs) {
       throw new Error('SIGNED_FLOOR_EXPIRED');
+    }
+    // A configured independent store must atomically compare-and-advance
+    // before the local continuity monitor and SQLite transaction. It must be
+    // rollback-resistant itself; this code does not supply such storage.
+    if (independentContinuity !== null) {
+      const controller = new AbortController();
+      let settled = false;
+      const request = Promise.resolve().then(() =>
+        independentContinuity.advance(reply.floor.epoch,
+          verified.minimumLastSeenMs, controller.signal));
+      request.then(() => { settled = true; }, () => { settled = true; });
+      let deadline;
+      let timedOut = false;
+      const timer = new Promise((_, reject) => {
+        deadline = setTimeout(() => {
+          timedOut = true;
+          if (!settled) onAbandoned(request);
+          controller.abort();
+          reject(new Error('INDEPENDENT_CONTINUITY_TIMEOUT'));
+        }, fetchTimeoutMs);
+      });
+      let accepted;
+      try {
+        accepted = await Promise.race([request, timer]);
+      } finally {
+        clearTimeout(deadline);
+      }
+      const checkedAt = monotonicNow();
+      if (timedOut || accepted !== true ||
+          typeof checkedAt !== 'bigint' || checkedAt < start ||
+          checkedAt - start > maxAgeNs) {
+        throw new Error('INDEPENDENT_CONTINUITY_REJECTED');
+      }
     }
     // Only authenticated, sufficiently fresh signed proofs can advance this
     // process-local high-watermark. Regression is rejected before SQLite writes.
@@ -220,4 +258,16 @@ function createPrefetchedSignedChallengeRegistry(db, {
   });
 }
 
-module.exports = { createPrefetchedSignedChallengeRegistry };
+/** Explicit strict mode: refuse construction without an independent authority. */
+function createIndependentlyGuardedChallengeRegistry(db, options = {}) {
+  if (!options || !isIndependentContinuityAuthority(options.independentContinuity) ||
+      !options.floorAuthority ||
+      options.independentContinuity.namespace !== options.floorAuthority.namespace) {
+    throw new TypeError('Independent continuity authority required');
+  }
+  return createPrefetchedSignedChallengeRegistry(db, options);
+}
+module.exports = {
+  createPrefetchedSignedChallengeRegistry,
+  createIndependentlyGuardedChallengeRegistry
+};
