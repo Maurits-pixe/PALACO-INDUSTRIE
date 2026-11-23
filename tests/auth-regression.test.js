@@ -17,6 +17,8 @@ async function startServer(t, env = {}) {
     require(name) {
       if (name === "./distribution/application-challenge-http")
         return require("../distribution/application-challenge-http");
+      if (name === "./distribution/distribution-startup-interlock")
+        return require("../distribution/distribution-startup-interlock");
       if (name !== "node:http") return require(name);
       return { ...http, createServer(handler) {
         server = http.createServer(handler);
@@ -228,4 +230,30 @@ test("distribution HTTP perimeter enforces session, CSRF, and trust-disabled HOL
   assert.equal(alternate.status,404);
   const wrongMethod=await client.fetch(issue,{method:"GET"});
   assert.equal(wrongMethod.status,405);
+});
+
+
+test("distribution override environment never opens issue or consume", async t => {
+  const server=await startServer(t,{
+    PALACO_DISTRIBUTION_ENABLE:"true",
+    PALACO_DISTRIBUTION_BYPASS:"1",
+    PALACO_GO13_RELEASE:"GO",
+    PALACO_AUTHORIZATION:"ALLOW"
+  });
+  const client=browser(server);
+  const registration=await signup(client);
+  const {csrfToken}=await registration.json();
+  for(const endpoint of ["/api/distribution/challenges/issue",
+    "/api/distribution/challenges/consume"]){
+    const response=await client.fetch(endpoint,{
+      method:"POST",
+      headers:{"Content-Type":"application/json","X-CSRF-Token":csrfToken},
+      body:JSON.stringify({namespace:"palaco.one"})
+    });
+    assert.equal(response.status,503);
+    const result=await response.json();
+    assert.equal(result.error,"DISTRIBUTION_TRUST_NOT_CONFIGURED");
+    assert.equal(result.authorization,"DENY");
+    assert.equal(result.go13,"HOLD");
+  }
 });
