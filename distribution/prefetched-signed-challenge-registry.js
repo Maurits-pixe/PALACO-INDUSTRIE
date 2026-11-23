@@ -4,6 +4,7 @@ const { randomBytes } = require('node:crypto');
 const { verifySignedClockFloor } = require('./signed-clock-floor');
 const { createAuditedDurableChallengeRegistry } = require('./durable-challenge-registry');
 const { isSharedAuthorityAdmission } = require('./shared-authority-admission');
+const { createSignedFloorContinuity, isSignedFloorContinuity } = require('./signed-floor-continuity');
 
 const NS = /^[a-z][a-z0-9._-]{2,79}$/;
 
@@ -29,7 +30,7 @@ function createPrefetchedSignedChallengeRegistry(db, {
   floorAuthority, clock = Date.now, ttlMs = 60_000, maxPending = 128,
   maxRows = 100000, maxProofAgeMs = 5000, fetchTimeoutMs = 3000,
   maxInFlight = 16, failureThreshold = 3, cooldownMs = 30_000,
-  sharedAdmission = null,
+  sharedAdmission = null, signedFloorContinuity = null,
   monotonicNow = () => process.hrtime.bigint()
 } = {}) {
   if (!floorAuthority || typeof floorAuthority !== 'object' ||
@@ -52,6 +53,7 @@ function createPrefetchedSignedChallengeRegistry(db, {
       !Number.isSafeInteger(cooldownMs) || cooldownMs < 1 ||
       cooldownMs > 300_000 ||
       (sharedAdmission !== null && !isSharedAuthorityAdmission(sharedAdmission)) ||
+      (signedFloorContinuity !== null && !isSignedFloorContinuity(signedFloorContinuity)) ||
       typeof monotonicNow !== 'function') {
     throw new TypeError('Independent signed-floor configuration required');
   }
@@ -62,6 +64,7 @@ function createPrefetchedSignedChallengeRegistry(db, {
   let consecutiveFailures = 0;
   let blockedUntil = null;
   let probeInProgress = false;
+  const continuity = signedFloorContinuity || createSignedFloorContinuity();
 
   async function prepareFloor(onAbandoned) {
     const challenge = randomBytes(32).toString('hex');
@@ -110,6 +113,11 @@ function createPrefetchedSignedChallengeRegistry(db, {
     const end = monotonicNow();
     if (typeof end !== 'bigint' || end < start || end - start > maxAgeNs) {
       throw new Error('SIGNED_FLOOR_EXPIRED');
+    }
+    // Only authenticated, sufficiently fresh signed proofs can advance this
+    // process-local high-watermark. Regression is rejected before SQLite writes.
+    if (!continuity.observe(reply.floor.epoch, verified.minimumLastSeenMs)) {
+      throw new Error('SIGNED_FLOOR_CONTINUITY_ROLLBACK');
     }
     let used = false;
     return () => {
