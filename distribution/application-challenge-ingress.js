@@ -25,6 +25,14 @@ function blocked(reason) {
  * A verifier can validate a challenge; it never grants release authority.
  */
 function createApplicationChallengeIngress(db, options) {
+  if (!options || !Array.isArray(options.pinnedReceiptRoots) ||
+      options.pinnedReceiptRoots.length < 1 ||
+      !Number.isSafeInteger(options.minimumReceiptSequence) ||
+      options.minimumReceiptSequence < 0)
+    throw new TypeError('Pinned receipt roots and sequence required');
+  const pinnedReceiptRoots = Object.freeze(options.pinnedReceiptRoots.map(root =>
+    Object.freeze({...root})));
+  const minimumReceiptSequence = options.minimumReceiptSequence;
   if (!db || typeof db.exec!=='function' || typeof db.prepare!=='function')
     throw new TypeError('SQLite challenge database required');
   const strict = createCheckpointGuardedChallengeRegistry(db,options);
@@ -50,13 +58,12 @@ function createApplicationChallengeIngress(db, options) {
               authorization:'DENY',go13:'HOLD',mayPublish:false,mayInstall:false}) :
             blocked('CHALLENGE_ISSUE_BLOCKED');
         }
-        const allowed=['namespace','challenge','state','endorsement',
-          'pinnedRoots','minimumSequence'];
+        const allowed=['namespace','challenge','state','endorsement'];
         if(Object.keys(body).length!==allowed.length ||
            allowed.some(key=>!Object.hasOwn(body,key)))
           return blocked('CHALLENGE_BODY_INVALID');
         const result=await strict.consume(body.namespace,body.challenge,
-          body.state,body.endorsement,body.pinnedRoots,body.minimumSequence);
+          body.state,body.endorsement,pinnedReceiptRoots,minimumReceiptSequence);
         return Object.freeze({...result,authorization:'DENY',go13:'HOLD',
           mayAdvance:false,mayRestore:false,mayRotate:false,
           mayInstall:false,mayPublish:false});
