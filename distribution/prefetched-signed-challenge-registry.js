@@ -123,6 +123,39 @@ function createPrefetchedSignedChallengeRegistry(db, {
     if (typeof end !== 'bigint' || end < start || end - start > maxAgeNs) {
       throw new Error('SIGNED_FLOOR_EXPIRED');
     }
+    // Mandatory in createCheckpointGuardedChallengeRegistry: verify the
+    // UNMODIFIED PostgreSQL row before independent compare-and-advance.
+    // Otherwise an UPDATE could conceal a restored high-watermark.
+    // External operations always run before SQLite BEGIN IMMEDIATE.
+    if (checkpointGate !== null) {
+      const controller = new AbortController();
+      let settled = false;
+      const request = Promise.resolve().then(() =>
+        checkpointGate.verify(reply.floor.epoch,
+          verified.minimumLastSeenMs, controller.signal));
+      request.then(() => { settled = true; }, () => { settled = true; });
+      let deadline;
+      let timedOut = false;
+      const timer = new Promise((_, reject) => {
+        deadline = setTimeout(() => {
+          timedOut = true;
+          if (!settled) onAbandoned(request);
+          controller.abort();
+          reject(new Error('CHECKPOINT_GATE_TIMEOUT'));
+        }, fetchTimeoutMs);
+      });
+      let accepted;
+      try {
+        accepted = await Promise.race([request, timer]);
+      } finally {
+        clearTimeout(deadline);
+      }
+      const checkedAt = monotonicNow();
+      if (timedOut || accepted !== true ||
+          typeof checkedAt !== 'bigint' || checkedAt < start ||
+          checkedAt - start > maxAgeNs)
+        throw new Error('CHECKPOINT_GATE_REJECTED');
+    }
     // A configured independent store must atomically compare-and-advance
     // before the local continuity monitor and SQLite transaction. It must be
     // rollback-resistant itself; this code does not supply such storage.
@@ -155,38 +188,6 @@ function createPrefetchedSignedChallengeRegistry(db, {
           checkedAt - start > maxAgeNs) {
         throw new Error('INDEPENDENT_CONTINUITY_REJECTED');
       }
-    }
-    // Mandatory in createCheckpointGuardedChallengeRegistry: fresh independent
-    // chain anchor + signed checkpoint + live PostgreSQL row verification.
-    // External operations always run before SQLite BEGIN IMMEDIATE.
-    if (checkpointGate !== null) {
-      const controller = new AbortController();
-      let settled = false;
-      const request = Promise.resolve().then(() =>
-        checkpointGate.verify(reply.floor.epoch,
-          verified.minimumLastSeenMs, controller.signal));
-      request.then(() => { settled = true; }, () => { settled = true; });
-      let deadline;
-      let timedOut = false;
-      const timer = new Promise((_, reject) => {
-        deadline = setTimeout(() => {
-          timedOut = true;
-          if (!settled) onAbandoned(request);
-          controller.abort();
-          reject(new Error('CHECKPOINT_GATE_TIMEOUT'));
-        }, fetchTimeoutMs);
-      });
-      let accepted;
-      try {
-        accepted = await Promise.race([request, timer]);
-      } finally {
-        clearTimeout(deadline);
-      }
-      const checkedAt = monotonicNow();
-      if (timedOut || accepted !== true ||
-          typeof checkedAt !== 'bigint' || checkedAt < start ||
-          checkedAt - start > maxAgeNs)
-        throw new Error('CHECKPOINT_GATE_REJECTED');
     }
     // Only authenticated, sufficiently fresh signed proofs can advance this
     // process-local high-watermark. Regression is rejected before SQLite writes.
