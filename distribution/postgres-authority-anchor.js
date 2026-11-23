@@ -66,7 +66,19 @@ function createAuthorityAnchorStore({namespace,query}={}){
        row.digest===nextDigest;
    }catch(_){return false;}
  }
- return Object.freeze({namespace,latest,compareAndAdvance});
+ // Never expose arbitrary digest writes to callers. Only a fully verified
+ // rotation can propose a monotonic persisted head update.
+ const store={namespace,latest,
+   async advanceVerified(previous,next,record,endorsements,reviewerRoots,signal){
+     const proof=await verifyAnchoredAuthorityRotation(store,previous,next,record,
+       endorsements,reviewerRoots,signal);
+     if(proof.readiness!=='ANCHOR_MATCH_VERIFIED_NON_AUTHORIZING')
+       return false;
+     return compareAndAdvance(previous.revision,authorityDigest(previous),
+       proof.revision,proof.digest,signal);
+   }
+ };
+ return Object.freeze(store);
 }
 
 async function verifyAnchoredAuthorityRotation(store,previous,next,record,
