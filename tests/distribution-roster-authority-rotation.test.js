@@ -99,6 +99,12 @@ test('anchored revision and predecessor digest block rollback or skips',()=>{
 test('tampered rotation intent cannot reuse four valid signatures',()=>{
  const f=fixture();
  f.record.newKeyId='auth-q';
+ assert.deepEqual(check(f).findings,['AUTHORITY_ROTATION_STATE_INVALID']);
+});
+test('altered authority signature cannot authenticate valid rotation intent',()=>{
+ const f=fixture();
+ f.endorsements.newAuthority.signature=sign(null,rotationPayload(f.record),
+   keys[4].privateKey).toString('base64');
  assert.deepEqual(check(f).findings,['AUTHORITY_ROTATION_DUAL_SIGNATURE_INVALID']);
 });
 test('untrusted old anchor cannot be inferred from signed proposal',()=>{
