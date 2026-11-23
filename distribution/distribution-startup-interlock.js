@@ -1,6 +1,7 @@
 'use strict';
 
-const {verifyBootstrapDossier} = require('./bootstrap-review-dossier');
+const {verifyBootstrapDossier,verifyRosterBoundBootstrapDossier} =
+  require('./bootstrap-review-dossier');
 
 /**
  * v3.4 startup interlock.
@@ -44,9 +45,13 @@ function createDistributionStartupInterlock(environment={}, reviewEvidence=null)
           !Object.hasOwn(reviewEvidence,'reviewPolicy')) {
         evidenceFinding='BOOTSTRAP_REVIEW_INPUT_INVALID';
       } else {
-        const assessment=verifyBootstrapDossier(
-          reviewEvidence.dossier,reviewEvidence.endorsements,
-          reviewEvidence.reviewPolicy);
+        const assessment=Object.hasOwn(reviewEvidence,'rosterEvidence')
+          ? verifyRosterBoundBootstrapDossier(
+            reviewEvidence.dossier,reviewEvidence.endorsements,
+            reviewEvidence.reviewPolicy,reviewEvidence.rosterEvidence)
+          : verifyBootstrapDossier(
+            reviewEvidence.dossier,reviewEvidence.endorsements,
+            reviewEvidence.reviewPolicy);
         evidenceDigest=assessment.dossierDigest;
         evidenceFinding=assessment.findings[0] || 'BOOTSTRAP_REVIEW_INPUT_INVALID';
         if(evidenceFinding==='BOOTSTRAP_EVIDENCE_VERIFIED_NO_RELEASE_AUTHORITY')
