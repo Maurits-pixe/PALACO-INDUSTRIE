@@ -3,7 +3,8 @@
 // Read-only, operator-reviewed bootstrap dossier verifier.
 // This is diagnostic evidence, NOT an enabling capability or a trust service.
 const {createPublicKey,verify,createHash} = require('node:crypto');
-const {verifyReviewerRosterTransition}=require('./reviewer-roster-transition');
+const {verifyReviewerRosterTransition,
+  verifyRotationBoundReviewerRosterTransition}=require('./reviewer-roster-transition');
 const HEX=/^[a-f0-9]{64}$/;
 const ID=/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
 const NS=/^[a-z][a-z0-9._-]{2,79}$/;
@@ -100,9 +101,13 @@ function verifyRosterBoundBootstrapDossier(dossier,endorsements,reviewPolicy,
   rosterEvidence) {
   if(!rosterEvidence||typeof rosterEvidence!=='object'||Array.isArray(rosterEvidence))
     return deny(['BOOTSTRAP_ROSTER_EVIDENCE_MISSING']);
-  const transition=verifyReviewerRosterTransition(
-    rosterEvidence.previous,rosterEvidence.next,rosterEvidence.endorsement,
-    rosterEvidence.anchor);
+  const transition=Object.hasOwn(rosterEvidence,'authorityRotation')
+    ? verifyRotationBoundReviewerRosterTransition(
+      rosterEvidence.previous,rosterEvidence.next,rosterEvidence.endorsement,
+      rosterEvidence.anchor,rosterEvidence.authorityRotation)
+    : verifyReviewerRosterTransition(
+      rosterEvidence.previous,rosterEvidence.next,rosterEvidence.endorsement,
+      rosterEvidence.anchor);
   if(transition.readiness!=='ROSTER_TRANSITION_VERIFIED_NON_AUTHORIZING')
     return deny(['BOOTSTRAP_ROSTER_TRANSITION_REJECTED']);
   if(!dossier||dossier.pinnedRootsDigest!==transition.digest)
