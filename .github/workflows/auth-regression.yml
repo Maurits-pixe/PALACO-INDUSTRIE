@@ -53,6 +53,8 @@ jobs:
       # runtime dependencies and lockfiles are unchanged.
       - run: npm install --no-save --no-package-lock --ignore-scripts pg@8.16.3
       - run: node --test tests/postgres-live-continuity.test.js
+      - name: Test restricted PostgreSQL runtime role
+        run: node --test tests/postgres-runtime-privileges.test.js
       - name: Prepare committed continuity high-watermark
         env:
           PALACO_TEST_PHASE: prepare
