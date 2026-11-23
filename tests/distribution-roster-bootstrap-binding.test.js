@@ -123,7 +123,7 @@ test('a revoked reviewer is excluded from the quorum even with a historical sign
   {algorithm:'Ed25519',keyId:'key-b',
     signature:sign(null,dossierPayload(f.dossier),f.bob.privateKey).toString('base64')}
  ];
- assert.deepEqual(verify(f).findings,['BOOTSTRAP_REVIEW_ROOT_UNTRUSTED']);
+ assert.deepEqual(verify(f).findings,['BOOTSTRAP_REVIEW_QUORUM_MISSING']);
 });
 test('scope mismatch cannot reuse signed roster in another namespace',()=>{
  const f=fixture();f.policy.namespace='other.registry';
