@@ -55,6 +55,8 @@ jobs:
       - run: node --test tests/postgres-live-continuity.test.js
       - name: Verify signed external checkpoint against PostgreSQL rollback
         run: node --test tests/postgres-checkpoint-verification.test.js
+      - name: Verify strict checkpoint gate for SQLite issue and consume
+        run: node --test tests/postgres-checkpoint-strict-execution.test.js
       - name: Reject restored SQLite backup against independent PostgreSQL witness
         run: node --test tests/postgres-independent-rollback-rejection.test.js
       - name: Test restricted PostgreSQL runtime role
