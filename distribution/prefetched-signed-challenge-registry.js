@@ -6,6 +6,7 @@ const { createAuditedDurableChallengeRegistry } = require('./durable-challenge-r
 const { isSharedAuthorityAdmission } = require('./shared-authority-admission');
 const { createSignedFloorContinuity, isSignedFloorContinuity } = require('./signed-floor-continuity');
 const { isIndependentContinuityAuthority } = require('./independent-continuity-authority');
+const { isCheckpointExecutionGate } = require('./checkpoint-execution-gate');
 
 const NS = /^[a-z][a-z0-9._-]{2,79}$/;
 
@@ -32,7 +33,7 @@ function createPrefetchedSignedChallengeRegistry(db, {
   maxRows = 100000, maxProofAgeMs = 5000, fetchTimeoutMs = 3000,
   maxInFlight = 16, failureThreshold = 3, cooldownMs = 30_000,
   sharedAdmission = null, signedFloorContinuity = null,
-  independentContinuity = null,
+  independentContinuity = null, checkpointGate = null,
   monotonicNow = () => process.hrtime.bigint()
 } = {}) {
   if (!floorAuthority || typeof floorAuthority !== 'object' ||
@@ -59,6 +60,9 @@ function createPrefetchedSignedChallengeRegistry(db, {
       (independentContinuity !== null &&
        (!isIndependentContinuityAuthority(independentContinuity) ||
         independentContinuity.namespace !== floorAuthority.namespace)) ||
+      (checkpointGate !== null &&
+       (!isCheckpointExecutionGate(checkpointGate) ||
+        checkpointGate.namespace !== floorAuthority.namespace)) ||
       typeof monotonicNow !== 'function') {
     throw new TypeError('Independent signed-floor configuration required');
   }
@@ -151,6 +155,38 @@ function createPrefetchedSignedChallengeRegistry(db, {
           checkedAt - start > maxAgeNs) {
         throw new Error('INDEPENDENT_CONTINUITY_REJECTED');
       }
+    }
+    // Mandatory in createCheckpointGuardedChallengeRegistry: fresh independent
+    // chain anchor + signed checkpoint + live PostgreSQL row verification.
+    // External operations always run before SQLite BEGIN IMMEDIATE.
+    if (checkpointGate !== null) {
+      const controller = new AbortController();
+      let settled = false;
+      const request = Promise.resolve().then(() =>
+        checkpointGate.verify(reply.floor.epoch,
+          verified.minimumLastSeenMs, controller.signal));
+      request.then(() => { settled = true; }, () => { settled = true; });
+      let deadline;
+      let timedOut = false;
+      const timer = new Promise((_, reject) => {
+        deadline = setTimeout(() => {
+          timedOut = true;
+          if (!settled) onAbandoned(request);
+          controller.abort();
+          reject(new Error('CHECKPOINT_GATE_TIMEOUT'));
+        }, fetchTimeoutMs);
+      });
+      let accepted;
+      try {
+        accepted = await Promise.race([request, timer]);
+      } finally {
+        clearTimeout(deadline);
+      }
+      const checkedAt = monotonicNow();
+      if (timedOut || accepted !== true ||
+          typeof checkedAt !== 'bigint' || checkedAt < start ||
+          checkedAt - start > maxAgeNs)
+        throw new Error('CHECKPOINT_GATE_REJECTED');
     }
     // Only authenticated, sufficiently fresh signed proofs can advance this
     // process-local high-watermark. Regression is rejected before SQLite writes.
@@ -267,7 +303,19 @@ function createIndependentlyGuardedChallengeRegistry(db, options = {}) {
   }
   return createPrefetchedSignedChallengeRegistry(db, options);
 }
+/** v3.1 strict route: independent monotone authority AND checkpoint required. */
+function createCheckpointGuardedChallengeRegistry(db, options = {}) {
+  if (!options || !isIndependentContinuityAuthority(options.independentContinuity) ||
+      !isCheckpointExecutionGate(options.checkpointGate) ||
+      !options.floorAuthority ||
+      options.independentContinuity.namespace !== options.floorAuthority.namespace ||
+      options.checkpointGate.namespace !== options.floorAuthority.namespace) {
+    throw new TypeError('Independent checkpoint and continuity gate required');
+  }
+  return createPrefetchedSignedChallengeRegistry(db, options);
+}
 module.exports = {
   createPrefetchedSignedChallengeRegistry,
-  createIndependentlyGuardedChallengeRegistry
+  createIndependentlyGuardedChallengeRegistry,
+  createCheckpointGuardedChallengeRegistry
 };
