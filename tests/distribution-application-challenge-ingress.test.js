@@ -54,13 +54,13 @@ function fixture(mode='valid') {
   }),
   query:async()=>({rowCount:1,rows:[{epoch:'5',minimum_last_seen_ms:'1000'}]})
  });
- const options={clock,floorAuthority,checkpointGate,independentContinuity};
+ const options={clock,floorAuthority,checkpointGate,independentContinuity,
+  pinnedReceiptRoots:roots('receipt',witness),minimumReceiptSequence:1};
  return {db,options,counts,count:()=>db.prepare('SELECT COUNT(*) n FROM distribution_challenges').get().n};
 }
 const issue={method:'POST',path:'/api/distribution/challenges/issue',body:{namespace:'palaco.one'}};
 const consume={method:'POST',path:'/api/distribution/challenges/consume',
- body:{namespace:'palaco.one',challenge:'0'.repeat(64),state:null,endorsement:null,
-  pinnedRoots:[],minimumSequence:0}};
+ body:{namespace:'palaco.one',challenge:'0'.repeat(64),state:null,endorsement:null}};
 
 test('ingress cannot be constructed without real independent signed gates',()=>{
  const f=fixture();try{
