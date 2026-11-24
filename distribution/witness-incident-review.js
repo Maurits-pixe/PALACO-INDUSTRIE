@@ -113,4 +113,38 @@ function verifyWitnessIncident(incident,endorsements,{
   findings:Object.freeze(['INCIDENT_REQUIRES_INDEPENDENT_RECONCILIATION'])
  });
 }
-module.exports={VERSION,incidentPayload,incidentDigest,verifyWitnessIncident};
+/**
+ * Bind signed observations to two CURRENT independent read-only witnesses.
+ * A stale or healed incident must not be misreported as a live divergence.
+ * Neither this path nor verified signatures can issue a repair instruction.
+ */
+async function verifyLiveWitnessIncident(incident,endorsements,policy,
+  {primary,secondary}={},signal){
+ const assessment=verifyWitnessIncident(incident,endorsements,policy);
+ if(assessment.readiness!=='INCIDENT_REVIEW_VERIFIED_NON_AUTHORIZING')
+  return assessment;
+ if(!primary||!secondary||primary===secondary||
+  primary.namespace!==incident.namespace||
+  secondary.namespace!==incident.namespace||
+  typeof primary.latest!=='function'||typeof secondary.latest!=='function'||
+  signal?.aborted)
+  return blocked('INCIDENT_LIVE_WITNESS_UNAVAILABLE',assessment.incidentDigest);
+ let first,second;
+ try{
+  [first,second]=await Promise.all([
+    primary.latest(signal),secondary.latest(signal)
+  ]);
+ }catch(_){return blocked('INCIDENT_LIVE_WITNESS_UNAVAILABLE',assessment.incidentDigest);}
+ if(signal?.aborted||!headValid(first)||!headValid(second))
+  return blocked('INCIDENT_LIVE_WITNESS_UNAVAILABLE',assessment.incidentDigest);
+ if(first.revision!==incident.primary.revision||
+    first.digest!==incident.primary.digest||
+    second.revision!==incident.secondary.revision||
+    second.digest!==incident.secondary.digest)
+  return blocked('INCIDENT_LIVE_SNAPSHOT_MISMATCH',assessment.incidentDigest);
+ return Object.freeze({
+  ...assessment,readiness:'INCIDENT_LIVE_DIVERGENCE_VERIFIED_NON_AUTHORIZING'
+ });
+}
+module.exports={VERSION,incidentPayload,incidentDigest,verifyWitnessIncident,
+ verifyLiveWitnessIncident};
