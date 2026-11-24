@@ -21,13 +21,14 @@ test('separately stored PostgreSQL incident head detects privileged restored arc
   const remoteUrl=new URL(root.toString());remoteUrl.pathname='/'+name;
   remote=new Client({connectionString:remoteUrl.toString()});
   await Promise.all([primary.connect(),remote.connect()]);
-  await primary.query(fs.readFileSync(path.join(__dirname,
-    '../distribution/sql/incident-append-only-v4.3.sql'),'utf8'));
-  await remote.query(fs.readFileSync(path.join(__dirname,
-    '../distribution/sql/incident-external-witness-v4.6.sql'),'utf8'));
+  const archiveSchema=fs.readFileSync(path.join(__dirname,
+    '../distribution/sql/incident-append-only-v4.3.sql'),'utf8');
+  const witnessSchema=fs.readFileSync(path.join(__dirname,
+    '../distribution/sql/incident-external-witness-v4.6.sql'),'utf8');
+  await primary.query(archiveSchema);
+  await remote.query(witnessSchema);
   const namespace='palaco.v46ci',old='a'.repeat(64),fresh='b'.repeat(64);
   // Privileged CI fixture only: simulated archive at head 1 and witness at 2.
-  await primary.query('TRUNCATE palaco_incident_archive.entries');
   const insert=[
     'INSERT INTO palaco_incident_archive.entries',
     '(namespace,sequence,incident_id,prior_digest,incident_digest,',
@@ -38,9 +39,7 @@ test('separately stored PostgreSQL incident head detects privileged restored arc
     old,1000,'{}','[]']);
   await primary.query(insert,[namespace,2,'incident-2',old,
     fresh,2000,'{}','[]']);
-  await remote.query('DELETE FROM palaco_incident_witness.heads WHERE namespace=$1',
-    [namespace]).catch(()=>{});
-  await remote.query(
+   await remote.query(
     'INSERT INTO palaco_incident_witness.heads(namespace,sequence,incident_digest) VALUES($1,$2,$3)',
     [namespace,1,old]);
   await remote.query(
@@ -53,7 +52,9 @@ test('separately stored PostgreSQL incident head detects privileged restored arc
   assert.equal(ok.authorization,'DENY');
   // The operator forcibly restores the primary to an old backup. A real
   // independent witness does not follow this rollback.
-  await primary.query('TRUNCATE palaco_incident_archive.entries');
+  // Administrator-controlled DROP/RESTORE defeats local archive triggers.
+  await primary.query('DROP SCHEMA palaco_incident_archive CASCADE');
+  await primary.query(archiveSchema);
   await primary.query(insert,[namespace,1,'incident-1','0'.repeat(64),
     old,1000,'{}','[]']);
   const stale=await verifyIncidentArchiveWitness(archive,witness);
