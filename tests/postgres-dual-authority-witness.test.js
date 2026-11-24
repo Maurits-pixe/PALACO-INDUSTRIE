@@ -10,6 +10,8 @@ const {createAuthorityAnchorStore}=
  require('../distribution/postgres-authority-anchor');
 const {createDualAuthorityWitness}=
  require('../distribution/dual-authority-witness');
+const {incidentPayload,verifyLiveWitnessIncident}=
+ require('../distribution/witness-incident-review');
 
 function fixture(){
  const keys=Array.from({length:4},()=>generateKeyPairSync('ed25519'));
@@ -154,6 +156,47 @@ test('two separate PostgreSQL databases detect restoration of primary witness', 
   assert.deepEqual(restored.findings,['DUAL_AUTHORITY_WITNESS_DIVERGENCE']);
   assert.equal(restored.authorization,'DENY');
   assert.equal(restored.go13,'HOLD');
+  // A two-reviewer forensic incident must match BOTH live witness heads.
+  const reviewerA=generateKeyPairSync('ed25519');
+  const reviewerB=generateKeyPairSync('ed25519');
+  const incident={
+    schemaVersion:'palaco.distribution.witness-incident.v1',
+    namespace:'palaco.registry',incidentId:'ci-restore-41',
+    sequence:1,priorIncidentDigest:'0'.repeat(64),
+    observedAtMs:1000,expiresAtMs:5000,
+    primary:{revision:10,digest:before},
+    secondary:{revision:11,digest:after},
+    authorization:'DENY',go13:'HOLD',recommendedAction:'QUARANTINE_NO_SYNC'
+  };
+  const signed=incidentPayload(incident);
+  const signatures=[
+    {algorithm:'Ed25519',keyId:'incident-review-a',
+      signature:sign(null,signed,reviewerA.privateKey).toString('base64')},
+    {algorithm:'Ed25519',keyId:'incident-review-b',
+      signature:sign(null,signed,reviewerB.privateKey).toString('base64')}
+  ];
+  const reviewPolicy={namespace:'palaco.registry',minimumSequence:1,
+    priorIncidentDigest:'0'.repeat(64),nowMs:2000,
+    pinnedReviewRoots:[
+      {keyId:'incident-review-a',reviewerId:'incident-person-a',
+        enabled:true,revoked:false,
+        publicKeyPem:reviewerA.publicKey.export({type:'spki',format:'pem'})},
+      {keyId:'incident-review-b',reviewerId:'incident-person-b',
+        enabled:true,revoked:false,
+        publicKeyPem:reviewerB.publicKey.export({type:'spki',format:'pem'})}
+    ]};
+  const liveWitnesses={
+    primary:createAuthorityAnchorStore({namespace:'palaco.registry',
+      query:q=>primary.query(q)}),
+    secondary:createAuthorityAnchorStore({namespace:'palaco.registry',
+      query:q=>secondary.query(q)})
+  };
+  const reviewed=await verifyLiveWitnessIncident(incident,signatures,
+    reviewPolicy,liveWitnesses);
+  assert.equal(reviewed.readiness,
+    'INCIDENT_LIVE_DIVERGENCE_VERIFIED_NON_AUTHORIZING');
+  assert.equal(reviewed.maySynchronize,false);
+  assert.equal(reviewed.authorization,'DENY');
   const secondaryHead=await secondary.query(
    'SELECT revision,state_digest FROM palaco_authority_anchor.latest WHERE namespace=$1',
    ['palaco.registry']);
@@ -164,6 +207,9 @@ test('two separate PostgreSQL databases detect restoration of primary witness', 
    [11,'f'.repeat(64),'palaco.registry']);
   assert.deepEqual((await dual.verifyHead(11,after)).findings,
    ['DUAL_AUTHORITY_WITNESS_DIVERGENCE']);
+  const altered=await verifyLiveWitnessIncident(incident,signatures,
+    reviewPolicy,liveWitnesses);
+  assert.deepEqual(altered.findings,['INCIDENT_LIVE_SNAPSHOT_MISMATCH']);
  }finally{
   if(primary)await primary.end().catch(()=>{});
   if(secondary)await secondary.end().catch(()=>{});
