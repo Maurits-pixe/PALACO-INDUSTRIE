@@ -65,6 +65,8 @@ jobs:
         run: node --test tests/postgres-incident-witness-handoff.test.js
       - name: Verify anchored receipt succession and restored registry rejection
         run: node --test tests/postgres-receipt-succession.test.js
+      - name: Reverify archived historical receipt signatures and reject tampered evidence
+        run: node --test tests/postgres-historical-receipt-evidence.test.js
       - name: Verify isolated incident archive reader and writer permissions
         run: node --test tests/postgres-incident-archive-privileges.test.js
       - name: Verify signed external checkpoint against PostgreSQL rollback
