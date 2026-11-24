@@ -59,3 +59,9 @@ DROP TRIGGER IF EXISTS validate_incident_append ON palaco_incident_archive.entri
 CREATE TRIGGER validate_incident_append
 BEFORE INSERT ON palaco_incident_archive.entries
 FOR EACH ROW EXECUTE FUNCTION palaco_incident_archive.validate_append();
+
+-- TRUNCATE does not emit row DELETE triggers: deny it independently.
+DROP TRIGGER IF EXISTS reject_incident_truncate ON palaco_incident_archive.entries;
+CREATE TRIGGER reject_incident_truncate
+BEFORE TRUNCATE ON palaco_incident_archive.entries
+FOR EACH STATEMENT EXECUTE FUNCTION palaco_incident_archive.reject_mutation();
