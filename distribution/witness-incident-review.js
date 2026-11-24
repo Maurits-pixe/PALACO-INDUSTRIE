@@ -119,10 +119,12 @@ function verifyWitnessIncident(incident,endorsements,{
  * Neither this path nor verified signatures can issue a repair instruction.
  */
 async function verifyLiveWitnessIncident(incident,endorsements,policy,
-  {primary,secondary}={},signal){
+  witnesses={},signal){
  const assessment=verifyWitnessIncident(incident,endorsements,policy);
  if(assessment.readiness!=='INCIDENT_REVIEW_VERIFIED_NON_AUTHORIZING')
   return assessment;
+ const {primary,secondary}=witnesses&&typeof witnesses==='object'&&
+   !Array.isArray(witnesses)?witnesses:{};
  if(!primary||!secondary||primary===secondary||
   primary.namespace!==incident.namespace||
   secondary.namespace!==incident.namespace||
