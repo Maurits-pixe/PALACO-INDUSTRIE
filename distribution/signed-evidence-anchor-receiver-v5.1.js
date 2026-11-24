@@ -2,7 +2,8 @@
 // v5.1: verify primary full signed-evidence chain before independently
 // recording a recipient-signed external root acknowledgement.
 // This is a trusted process adapter, not a public service or release gate.
-const {signedEvidenceChain,SELECT}=require('./signed-evidence-v5');
+const {signedEvidenceChain,evidenceDigest,SELECT}=require('./signed-evidence-v5');
+const {verifyIncidentWitnessHandoff,handoffDigest}=require('./incident-witness-handoff');
 const {verifySignedEvidenceAnchorTransfer}=
  require('./signed-evidence-anchor-handoff-v5.1');
 const HEX=/^[a-f0-9]{64}$/;
@@ -42,12 +43,14 @@ function parseHead(reply){
  return {sequence,digest:row.chain_digest};
 }
 function createSignedEvidenceAnchorReceiver({
- namespace,firstSequence,evidenceQuery,anchorQuery,trustPolicyProvider
+ namespace,firstSequence,evidenceQuery,anchorQuery,trustPolicyProvider,
+ historicalRootsProvider
 }={}){
  if(typeof namespace!=='string'||!/^[a-z][a-z0-9._-]{2,79}$/.test(namespace)||
  !Number.isSafeInteger(firstSequence)||firstSequence<2||
  typeof evidenceQuery!=='function'||typeof anchorQuery!=='function'||
- evidenceQuery===anchorQuery||typeof trustPolicyProvider!=='function')
+ evidenceQuery===anchorQuery||typeof trustPolicyProvider!=='function'||
+ typeof historicalRootsProvider!=='function')
  throw new TypeError('Separate evidence store, witness and protected trust policy required');
  return Object.freeze({namespace,
   async receive(h,sig,r,ack,signal){
@@ -69,6 +72,38 @@ function createSignedEvidenceAnchorReceiver({
     return denied('EVIDENCE_ANCHOR_ARCHIVE_UNAVAILABLE');
    const full=signedEvidenceChain(stored.rows,{namespace,firstSequence});
    if(!full)return denied('EVIDENCE_ANCHOR_ARCHIVE_INVALID');
+   let predecessor=null;
+   for(const row of stored.rows){
+    if(signal?.aborted)return denied('EVIDENCE_ANCHOR_ABORTED');
+    const signed=row.handoff,received=row.receipt;
+    if(!signed||!received||signed.namespace!==namespace||
+       signed.nextSequence!==Number(row.sequence)||
+       signed.nonce!==row.nonce||signed.recipientId!==row.recipient_id||
+       handoffDigest(signed)!==row.handoff_digest||
+       received.handoffDigest!==row.handoff_digest||
+       (predecessor&&(signed.previousSequence!==predecessor.nextSequence||
+         signed.previousDigest!==predecessor.nextDigest)))
+      return denied('EVIDENCE_ANCHOR_SIGNED_HISTORY_INVALID');
+    const bytes=evidenceDigest(signed,row.sender_signature,received,
+       row.receipt_signature);
+    if(!bytes||bytes!==row.evidence_digest)
+      return denied('EVIDENCE_ANCHOR_SIGNED_HISTORY_INVALID');
+    let roots;
+    try{
+     roots=await historicalRootsProvider(namespace,Number(row.sequence),signal);
+    }catch(_){return denied('EVIDENCE_ANCHOR_HISTORIC_ROOTS_UNAVAILABLE');}
+    if(signal?.aborted||!roots)
+      return denied('EVIDENCE_ANCHOR_HISTORIC_ROOTS_UNAVAILABLE');
+    const verified=verifyIncidentWitnessHandoff(signed,
+      row.sender_signature,received,row.receipt_signature,{
+       namespace,previousSequence:signed.previousSequence,
+       previousDigest:signed.previousDigest,nowMs:received.acceptedAtMs,
+       senderRoot:roots.senderRoot,recipientRoot:roots.recipientRoot
+      });
+    if(verified.readiness!=='WITNESS_HANDOFF_RECEIPT_VERIFIED_NON_AUTHORIZING')
+     return denied('EVIDENCE_ANCHOR_HISTORIC_SIGNATURE_INVALID');
+    predecessor=signed;
+   }
    if(!h||full.sequence!==h.nextSequence||full.digest!==h.nextDigest)
     return denied('EVIDENCE_ANCHOR_ARCHIVE_MISMATCH');
    const proof=verifySignedEvidenceAnchorTransfer(h,sig,r,ack,{
