@@ -153,6 +153,25 @@ test('PostgreSQL independently stored full-evidence root accepts signed CAS once
   assert.equal(beforeTransfer.readiness,'SOURCE_AHEAD_HOLD');
   assert.equal(beforeTransfer.authorization,'DENY');
   const params=[handoff,sender,receipt,ack];
+  // Force a late-stage RLS failure after CAS and receipt CTE are planned.
+  // PostgreSQL must roll the ENTIRE statement back, not leave a new head.
+  await external.query(
+   'DROP POLICY v53_dossier_insert ON palaco_signed_evidence_anchor.transfer_dossiers');
+  const failed=await receiver.receive(...params);
+  assert.equal(failed.readiness,'BLOCKED');
+  assert.equal(failed.authorization,'DENY');
+  const unadvanced=await writer.query(
+   'SELECT sequence,chain_digest FROM palaco_signed_evidence_anchor.latest WHERE namespace=$1',
+   [namespace]);
+  assert.deepEqual(unadvanced.rows,[{
+   sequence:'11',chain_digest:previous.digest
+  }]);
+  const noReceipt=await writer.query(
+   'SELECT count(*)::int AS n FROM palaco_signed_evidence_anchor.transfer_receipts WHERE namespace=$1',
+   [namespace]);
+  assert.equal(noReceipt.rows[0].n,0);
+  await external.query(
+   "CREATE POLICY v53_dossier_insert ON palaco_signed_evidence_anchor.transfer_dossiers FOR INSERT TO palaco_v51_anchor_writer WITH CHECK(namespace='palaco.v51ci')");
   const result=await receiver.receive(...params);
   assert.equal(result.readiness,'EVIDENCE_ANCHOR_RECEIPT_RECORDED_NON_AUTHORIZING');
   assert.equal(result.authorization,'DENY');assert.equal(result.go13,'HOLD');
