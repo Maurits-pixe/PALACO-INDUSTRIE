@@ -8,6 +8,8 @@ CREATE TABLE IF NOT EXISTS palaco_incident_archive.entries (
   prior_digest text NOT NULL CHECK (prior_digest ~ '^[0-9a-f]{64}$'),
   incident_digest text NOT NULL CHECK (incident_digest ~ '^[0-9a-f]{64}$'),
   observed_at_ms bigint NOT NULL CHECK (observed_at_ms >= 0),
+  dossier jsonb NOT NULL CHECK (jsonb_typeof(dossier) = 'object'),
+  endorsements jsonb NOT NULL CHECK (jsonb_typeof(endorsements) = 'array'),
   PRIMARY KEY(namespace,sequence),
   UNIQUE(namespace,incident_id),
   UNIQUE(namespace,incident_digest)
