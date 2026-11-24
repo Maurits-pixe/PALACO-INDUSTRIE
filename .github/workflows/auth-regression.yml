@@ -71,7 +71,7 @@ jobs:
         run: node --test tests/postgres-atomic-signed-evidence-v5.test.js
       - name: Verify full external transfer signatures, atomic dossier storage and partial-write diagnostics v5.3
         run: node --test tests/postgres-signed-evidence-anchor-handoff-v5.1.test.js
-      - name: Detect two-database restore against signed independent third checkpoint v5.4
+      - name: Reject all-three-database rollback against independently pinned third witness key history v5.5
         run: node --test tests/postgres-third-party-evidence-checkpoint-v5.4.test.js
       - name: Verify isolated incident archive reader and writer permissions
         run: node --test tests/postgres-incident-archive-privileges.test.js
