@@ -98,7 +98,9 @@ function createHistoricalReceiptVerifier({
     if(signal?.aborted)return deny('HISTORICAL_RECEIPTS_ABORTED');
     // Bind every signed handoff to the immediately prior signed witness
     // state. A valid signature on a different fork must not splice history.
-    if(precedingHandoff&&(!row.handoff||
+    if(!row.handoff)
+      return deny('HISTORICAL_RECEIPTS_SIGNATURE_OR_BINDING_INVALID');
+    if(precedingHandoff&&(
        row.handoff.previousSequence!==precedingHandoff.nextSequence||
        row.handoff.previousDigest!==precedingHandoff.nextDigest))
       return deny('HISTORICAL_RECEIPTS_SIGNED_LINEAGE_MISMATCH');
