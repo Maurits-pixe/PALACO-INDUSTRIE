@@ -9,6 +9,8 @@ const {handoffBytes,handoffDigest,receiptBytes}=
  require('../distribution/signed-evidence-anchor-handoff-v5.1');
 const {createSignedEvidenceAnchorReceiver}=
  require('../distribution/signed-evidence-anchor-receiver-v5.1');
+const {createEvidenceTransferReconciliationObserver}=
+ require('../distribution/evidence-transfer-reconciliation-v5.2');
 test('PostgreSQL independently stored full-evidence root accepts signed CAS once and blocks restored source', {
  skip:process.env.PALACO_TEST_POSTGRES!=='1'
 },async()=>{
@@ -133,10 +135,22 @@ test('PostgreSQL independently stored full-evidence root accepts signed CAS once
    trustPolicyProvider:async()=>({nowMs:2000,...roots}),
    historicalRootsProvider:async()=>roots
   });
+  const observer=createEvidenceTransferReconciliationObserver({
+   namespace,firstSequence:11,
+   evidenceQuery:q=>source.query(q),
+   anchorQuery:q=>writer.query(q),
+   historicalRootsProvider:async()=>roots
+  });
+  const beforeTransfer=await observer.inspect();
+  assert.equal(beforeTransfer.readiness,'SOURCE_AHEAD_HOLD');
+  assert.equal(beforeTransfer.authorization,'DENY');
   const params=[handoff,sender,receipt,ack];
   const result=await receiver.receive(...params);
   assert.equal(result.readiness,'EVIDENCE_ANCHOR_RECEIPT_RECORDED_NON_AUTHORIZING');
   assert.equal(result.authorization,'DENY');assert.equal(result.go13,'HOLD');
+  const afterTransfer=await observer.inspect();
+  assert.equal(afterTransfer.readiness,'MATCHED_NON_AUTHORIZING');
+  assert.equal(afterTransfer.mayRestore,false);
   assert.equal((await receiver.receive(...params)).readiness,'BLOCKED');
   const recorded=await writer.query(
    'SELECT nonce,handoff_digest FROM palaco_signed_evidence_anchor.transfer_receipts WHERE namespace=$1',
@@ -156,6 +170,9 @@ test('PostgreSQL independently stored full-evidence root accepts signed CAS once
   await source.query(schema);await source.query(receipts);
   await source.query(evidence);await source.query(commitments);
   assert.equal((await receiver.receive(...params)).readiness,'BLOCKED');
+  const afterRestore=await observer.inspect();
+  assert.equal(afterRestore.readiness,'BLOCKED');
+  assert.equal(afterRestore.authorization,'DENY');
   assert.equal((await external.query(
    'SELECT count(*)::int AS total FROM palaco_signed_evidence_anchor.transfer_receipts'
   )).rows[0].total,1);
