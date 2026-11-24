@@ -59,6 +59,8 @@ jobs:
         run: node --test tests/postgres-dual-authority-witness.test.js
       - name: Verify append-only signed forensic incident ledger
         run: node --test tests/postgres-incident-archive.test.js
+      - name: Verify external incident witness detects privileged archive restore
+        run: node --test tests/postgres-incident-external-witness.test.js
       - name: Verify isolated incident archive reader and writer permissions
         run: node --test tests/postgres-incident-archive-privileges.test.js
       - name: Verify signed external checkpoint against PostgreSQL rollback
