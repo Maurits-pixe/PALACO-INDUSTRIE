@@ -69,7 +69,7 @@ jobs:
         run: node --test tests/postgres-historical-receipt-evidence.test.js
       - name: Verify atomic complete signed receipts and independent evidence root v5
         run: node --test tests/postgres-atomic-signed-evidence-v5.test.js
-      - name: Verify restricted independently signed full-evidence root transfer v5.1
+      - name: Verify signed external transfer and partial-write reconciliation diagnostics v5.2
         run: node --test tests/postgres-signed-evidence-anchor-handoff-v5.1.test.js
       - name: Verify isolated incident archive reader and writer permissions
         run: node --test tests/postgres-incident-archive-privileges.test.js
