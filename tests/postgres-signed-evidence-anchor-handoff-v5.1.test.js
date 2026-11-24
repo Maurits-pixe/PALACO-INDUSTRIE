@@ -2,7 +2,9 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),path=require('node:path');
 const {generateKeyPairSync,sign}=require('node:crypto');
-const {signedEvidenceChain}=require('../distribution/signed-evidence-v5');
+const {signedEvidenceChain,evidenceDigest}=require('../distribution/signed-evidence-v5');
+const {handoffPayload,receiptPayload,handoffDigest:historicDigest}=
+ require('../distribution/incident-witness-handoff');
 const {handoffBytes,handoffDigest,receiptBytes}=
  require('../distribution/signed-evidence-anchor-handoff-v5.1');
 const {createSignedEvidenceAnchorReceiver}=
@@ -34,11 +36,32 @@ test('PostgreSQL independently stored full-evidence root accepts signed CAS once
   await external.query(sql('signed-evidence-external-anchor-v5.0.sql'));
   await external.query(sql('signed-evidence-anchor-receipts-v5.1.sql'));
   const namespace='palaco.v51ci';
+  const keys=[generateKeyPairSync('ed25519'),generateKeyPairSync('ed25519')];
+  const signHistoric=(bytes,index,keyId)=>({
+   algorithm:'Ed25519',keyId,
+   signature:sign(null,bytes,keys[index].privateKey).toString('base64')
+  });
+  const historic=(seq,prior,next)=>{
+   const h={schemaVersion:'palaco.distribution.incident-witness-handoff.v1',
+    namespace,senderId:'issuer-ci',recipientId:'custodian-ci',
+    nonce:'receipt-'+seq,previousSequence:seq-1,
+    previousDigest:prior,nextSequence:seq,nextDigest:next,
+    issuedAtMs:1000,expiresAtMs:5000,authorization:'DENY',
+    go13:'HOLD',purpose:'EVIDENCE_ONLY_NO_RELEASE'};
+   const r={schemaVersion:'palaco.distribution.incident-witness-receipt.v1',
+    namespace,recipientId:'custodian-ci',nonce:h.nonce,
+    handoffDigest:historicDigest(h),acceptedAtMs:1500,
+    acknowledgement:'EVIDENCE_RECEIVED_NO_AUTHORITY'};
+   const sender_signature=signHistoric(handoffPayload(h),0,'issuer-key');
+   const receipt_signature=signHistoric(receiptPayload(r),1,'custodian-key');
+   return {sequence:seq,nonce:h.nonce,handoff_digest:historicDigest(h),
+    recipient_id:'custodian-ci',
+    evidence_digest:evidenceDigest(h,sender_signature,r,receipt_signature),
+    handoff:h,sender_signature,receipt:r,receipt_signature};
+  };
   const rows=[
-   {sequence:11,nonce:'receipt-11',handoff_digest:'a'.repeat(64),
-    recipient_id:'custodian-ci',evidence_digest:'c'.repeat(64)},
-   {sequence:12,nonce:'receipt-12',handoff_digest:'b'.repeat(64),
-    recipient_id:'custodian-ci',evidence_digest:'d'.repeat(64)}
+   historic(11,'a'.repeat(64),'b'.repeat(64)),
+   historic(12,'b'.repeat(64),'c'.repeat(64))
   ];
   const receiptInsert=[
    'INSERT INTO palaco_incident_witness.receipts',
@@ -55,7 +78,9 @@ test('PostgreSQL independently stored full-evidence root accepts signed CAS once
    await source.query(receiptInsert,[namespace,r.sequence,r.nonce,
     r.handoff_digest,r.recipient_id]);
    await source.query(evidenceInsert,[namespace,r.sequence,r.nonce,
-    r.handoff_digest,r.recipient_id,'{}','{}','{}','{}']);
+    r.handoff_digest,r.recipient_id,
+    JSON.stringify(r.handoff),JSON.stringify(r.sender_signature),
+    JSON.stringify(r.receipt),JSON.stringify(r.receipt_signature)]);
    await source.query(
     'INSERT INTO palaco_incident_witness.evidence_commitments(namespace,sequence,evidence_digest) VALUES($1,$2,$3)',
     [namespace,r.sequence,r.evidence_digest]);
@@ -82,7 +107,6 @@ test('PostgreSQL independently stored full-evidence root accepts signed CAS once
   const restricted=new URL(url('palaco_full_evidence_v51_root'));
   restricted.username='palaco_v51_anchor_writer';restricted.password='ci_only_v51';
   writer=new Client({connectionString:restricted.toString()});await writer.connect();
-  const keys=[generateKeyPairSync('ed25519'),generateKeyPairSync('ed25519')];
   const roots={
    senderRoot:{identityId:'issuer-ci',keyId:'issuer-key',enabled:true,revoked:false,
     publicKeyPem:keys[0].publicKey.export({type:'spki',format:'pem'})},
@@ -106,7 +130,8 @@ test('PostgreSQL independently stored full-evidence root accepts signed CAS once
   const receiver=createSignedEvidenceAnchorReceiver({
    namespace,firstSequence:11,evidenceQuery:q=>source.query(q),
    anchorQuery:q=>writer.query(q),
-   trustPolicyProvider:async()=>({nowMs:2000,...roots})
+   trustPolicyProvider:async()=>({nowMs:2000,...roots}),
+   historicalRootsProvider:async()=>roots
   });
   const params=[handoff,sender,receipt,ack];
   const result=await receiver.receive(...params);
