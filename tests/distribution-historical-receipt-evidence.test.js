@@ -47,7 +47,7 @@ function fixture(){
     sequence:String(root.sequence),chain_digest:root.digest
    }]}),historicalRootsProvider:provider,...extra
   });
- return {rows,roots,provider,head,verifier};
+ return {rows,roots,provider,head,verifier,keys};
 }
 test('valid historical signatures reverify at receipt time, not current time',async()=>{
  const f=fixture();
@@ -81,6 +81,20 @@ test('truncated archive and forged metadata blocked by external root',async()=>{
  const rows=structuredClone(f.rows);rows[1].nonce='different-nonce';
  assert.deepEqual((await f.verifier(rows).verify()).findings,
   ['HISTORICAL_RECEIPTS_ANCHOR_MISMATCH']);
+});
+test('even correctly re-signed history cannot splice a different witness fork',async()=>{
+ const f=fixture(),rows=structuredClone(f.rows);
+ const changed=rows[1];
+ changed.handoff.previousDigest='f'.repeat(64);
+ changed.handoff_digest=handoffDigest(changed.handoff);
+ changed.receipt.handoffDigest=changed.handoff_digest;
+ changed.sender_signature.signature=sign(null,
+  handoffPayload(changed.handoff),f.keys[0].privateKey).toString('base64');
+ changed.receipt_signature.signature=sign(null,
+  receiptPayload(changed.receipt),f.keys[1].privateKey).toString('base64');
+ const forgedRoot=receiptChain(rows,{namespace,firstSequence:11});
+ assert.deepEqual((await f.verifier(rows,forgedRoot).verify()).findings,
+  ['HISTORICAL_RECEIPTS_SIGNED_LINEAGE_MISMATCH']);
 });
 test('revoked/missing historical roots and failed provider block verification',async()=>{
  const f=fixture();
