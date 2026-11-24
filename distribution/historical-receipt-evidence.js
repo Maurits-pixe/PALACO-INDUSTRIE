@@ -93,8 +93,15 @@ function createHistoricalReceiptVerifier({
    if(!root)return deny('HISTORICAL_RECEIPTS_ANCHOR_UNAVAILABLE');
    if(root.sequence!==chain.sequence||root.digest!==chain.digest)
     return deny('HISTORICAL_RECEIPTS_ANCHOR_MISMATCH');
+   let precedingHandoff=null;
    for(const row of evidence.rows){
     if(signal?.aborted)return deny('HISTORICAL_RECEIPTS_ABORTED');
+    // Bind every signed handoff to the immediately prior signed witness
+    // state. A valid signature on a different fork must not splice history.
+    if(precedingHandoff&&(!row.handoff||
+       row.handoff.previousSequence!==precedingHandoff.nextSequence||
+       row.handoff.previousDigest!==precedingHandoff.nextDigest))
+      return deny('HISTORICAL_RECEIPTS_SIGNED_LINEAGE_MISMATCH');
     let roots;
     try{
      roots=await historicalRootsProvider(namespace,Number(row.sequence),signal);
@@ -103,6 +110,7 @@ function createHistoricalReceiptVerifier({
      return deny('HISTORICAL_RECEIPTS_ROOTS_UNAVAILABLE');
     if(!validateRecord(row,namespace,roots,maximumLifetimeMs))
      return deny('HISTORICAL_RECEIPTS_SIGNATURE_OR_BINDING_INVALID');
+    precedingHandoff=row.handoff;
    }
    return Object.freeze({
     readiness:'HISTORICAL_RECEIPTS_VERIFIED_NON_AUTHORIZING',
