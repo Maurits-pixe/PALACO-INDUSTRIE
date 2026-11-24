@@ -67,6 +67,8 @@ jobs:
         run: node --test tests/postgres-receipt-succession.test.js
       - name: Reverify archived historical receipt signatures and reject tampered evidence
         run: node --test tests/postgres-historical-receipt-evidence.test.js
+      - name: Verify atomic complete signed receipts and independent evidence root v5
+        run: node --test tests/postgres-atomic-signed-evidence-v5.test.js
       - name: Verify isolated incident archive reader and writer permissions
         run: node --test tests/postgres-incident-archive-privileges.test.js
       - name: Verify signed external checkpoint against PostgreSQL rollback
