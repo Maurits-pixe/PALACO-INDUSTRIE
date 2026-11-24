@@ -4,20 +4,40 @@ const {generateKeyPairSync,sign}=require('node:crypto');
 const {handoffBytes,handoffDigest,receiptBytes,
  verifySignedEvidenceAnchorTransfer}=
  require('../distribution/signed-evidence-anchor-handoff-v5.1');
-const {signedEvidenceChain}=require('../distribution/signed-evidence-v5');
+const {signedEvidenceChain,evidenceDigest}=require('../distribution/signed-evidence-v5');
+const {handoffPayload,receiptPayload,handoffDigest:historicDigest}=
+ require('../distribution/incident-witness-handoff');
 const {createSignedEvidenceAnchorReceiver}=
  require('../distribution/signed-evidence-anchor-receiver-v5.1');
 function fixture(){
  const namespace='palaco.registry';
+ const keys=[generateKeyPairSync('ed25519'),generateKeyPairSync('ed25519')];
+ const historical=(sequence,prior,next)=>{
+  const h={schemaVersion:'palaco.distribution.incident-witness-handoff.v1',
+   namespace,senderId:'issuer',recipientId:'custodian',
+   nonce:'nonce'+sequence,previousSequence:sequence-1,
+   previousDigest:prior,nextSequence:sequence,nextDigest:next,
+   issuedAtMs:1000,expiresAtMs:5000,authorization:'DENY',
+   go13:'HOLD',purpose:'EVIDENCE_ONLY_NO_RELEASE'};
+  const r={schemaVersion:'palaco.distribution.incident-witness-receipt.v1',
+   namespace,recipientId:'custodian',nonce:h.nonce,
+   handoffDigest:historicDigest(h),acceptedAtMs:1500,
+   acknowledgement:'EVIDENCE_RECEIVED_NO_AUTHORITY'};
+  const sig=(bytes,i,keyId)=>({algorithm:'Ed25519',keyId,
+   signature:sign(null,bytes,keys[i].privateKey).toString('base64')});
+  const sender_signature=sig(handoffPayload(h),0,'issuer-key');
+  const receipt_signature=sig(receiptPayload(r),1,'custodian-key');
+  return {sequence:String(sequence),nonce:h.nonce,
+   handoff_digest:historicDigest(h),recipient_id:'custodian',
+   evidence_digest:evidenceDigest(h,sender_signature,r,receipt_signature),
+   handoff:h,receipt:r,sender_signature,receipt_signature};
+ };
  const rows=[
-  {sequence:'11',nonce:'nonce11',handoff_digest:'a'.repeat(64),
-   recipient_id:'custodian',evidence_digest:'c'.repeat(64)},
-  {sequence:'12',nonce:'nonce12',handoff_digest:'b'.repeat(64),
-   recipient_id:'custodian',evidence_digest:'d'.repeat(64)}
+  historical(11,'a'.repeat(64),'b'.repeat(64)),
+  historical(12,'b'.repeat(64),'c'.repeat(64))
  ];
  const prev=signedEvidenceChain(rows.slice(0,1),{namespace,firstSequence:11});
  const next=signedEvidenceChain(rows,{namespace,firstSequence:11});
- const keys=[generateKeyPairSync('ed25519'),generateKeyPairSync('ed25519')];
  const roots={
   senderRoot:{identityId:'issuer',keyId:'issuer-key',enabled:true,
    revoked:false,publicKeyPem:keys[0].publicKey.export({type:'spki',format:'pem'})},
@@ -83,7 +103,8 @@ test('receiver only writes after signed full-evidence chain matches and receipt 
  };
  const receiver=createSignedEvidenceAnchorReceiver({
   namespace:f.namespace,firstSequence:11,evidenceQuery:source,anchorQuery:anchor,
-  trustPolicyProvider:async()=>f.policy
+  trustPolicyProvider:async()=>f.policy,
+  historicalRootsProvider:async()=>f.roots
  });
  assert.equal(typeof receiver.query,'undefined');
  const one=await receiver.receive(f.h,f.s,f.r,f.ack);
@@ -108,7 +129,8 @@ test('unavailable external anchor, missing archive and stale primary block witho
     if(!req.text.startsWith('SELECT'))writes++;
     return {rowCount:1,rows:[{sequence:'11',chain_digest:f.prev.digest}]};
    },
-   trustPolicyProvider:async()=>f.policy,...option
+   trustPolicyProvider:async()=>f.policy,
+   historicalRootsProvider:async()=>f.roots,...option
   });
   assert.equal((await receiver.receive(f.h,f.s,f.r,f.ack)).readiness,'BLOCKED');
   assert.equal(writes,0);
@@ -125,7 +147,8 @@ test('external database conflict or unconfirmed atomic write never returns succe
    evidenceQuery:async()=>({rowCount:2,rows:f.rows}),
    anchorQuery:async req=>req.text.startsWith('SELECT')?
     {rowCount:1,rows:[{sequence:'11',chain_digest:f.prev.digest}]}:response,
-   trustPolicyProvider:async()=>f.policy
+   trustPolicyProvider:async()=>f.policy,
+   historicalRootsProvider:async()=>f.roots
   });
   assert.equal((await receiver.receive(f.h,f.s,f.r,f.ack)).readiness,'BLOCKED');
  }
