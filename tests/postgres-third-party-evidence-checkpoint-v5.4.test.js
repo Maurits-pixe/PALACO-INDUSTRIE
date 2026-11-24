@@ -4,6 +4,8 @@ const fs=require('node:fs'),path=require('node:path');
 const {generateKeyPairSync,sign}=require('node:crypto');
 const {VERSION,payload,createThirdPartyEvidenceCheckpointVerifier}=
  require('../distribution/third-party-evidence-checkpoint-v5.4');
+const {manifestDigest,createThirdWitnessKeyHistoryVerifier}=
+ require('../distribution/third-witness-key-history-v5.5');
 test('third signed PostgreSQL checkpoint detects coordinated restore of source and external anchor', {
  skip:process.env.PALACO_TEST_POSTGRES!=='1'
 },async()=>{
@@ -67,6 +69,21 @@ test('third signed PostgreSQL checkpoint detects coordinated restore of source a
   });
   assert.equal((await verifier.verify()).readiness,
    'THIRD_PARTY_CHECKPOINT_MATCHED_NON_AUTHORIZING');
+  const history={
+   schemaVersion:'palaco.distribution.third-witness-key-history.v1',
+   namespace,floorSequence:12,floorDigest:digest12,
+   epochs:[{observerId:'third-auditor',keyId:'third-key',
+    validFromMs:1000,validUntilMs:5000,enabled:true,revoked:false,
+    publicKeyPem:keys.publicKey.export({type:'spki',format:'pem'})}]
+  };
+  const pinnedManifestDigest=manifestDigest(history);
+  const independent=createThirdWitnessKeyHistoryVerifier({
+   namespace,anchorQuery:req=>external.query(req),
+   thirdPartyQuery:req=>third.query(req),
+   historyProvider:async()=>history,pinnedManifestDigest
+  });
+  assert.equal((await independent.verify()).readiness,
+   'THIRD_WITNESS_KEY_HISTORY_VERIFIED_NON_AUTHORIZING');
   // Privileged restore of TWO separate logical databases. Local triggers
   // cannot resist schema reconstruction; the third database remains at 12.
   await source.query('DROP SCHEMA palaco_incident_witness CASCADE');
@@ -94,6 +111,28 @@ test('third signed PostgreSQL checkpoint detects coordinated restore of source a
    [namespace]),error=>error.code==='23514');
   await assert.rejects(third.query('TRUNCATE palaco_third_witness.checkpoints'),
    error=>error.code==='23514');
+  // Test-only privileged, coordinated rollback of ALL THREE databases.
+  // The out-of-band pinned floor and key-history digest do not roll back.
+  await third.query('DROP SCHEMA palaco_third_witness CASCADE');
+  await third.query(sql('third-party-evidence-checkpoint-v5.4.sql'));
+  const older={...checkpoint,sequence:11,chainDigest:digest11};
+  const olderSignature=sign(null,payload(older),keys.privateKey).toString('base64');
+  await third.query(add,[namespace,11,digest11,1500,'third-auditor','third-key',
+   olderSignature]);
+  const allThree=await independent.verify();
+  assert.deepEqual(allThree.findings,['THIRD_HISTORY_HIGH_WATER_ROLLBACK']);
+  assert.equal(allThree.authorization,'DENY');assert.equal(allThree.go13,'HOLD');
+  assert.equal(allThree.mayRestore,false);
+  const substituted={...history,epochs:[{
+   ...history.epochs[0],
+   publicKeyPem:generateKeyPairSync('ed25519').publicKey.export({
+    type:'spki',format:'pem'})
+  }]};
+  assert.deepEqual((await createThirdWitnessKeyHistoryVerifier({
+   namespace,anchorQuery:req=>external.query(req),
+   thirdPartyQuery:req=>third.query(req),
+   historyProvider:async()=>substituted,pinnedManifestDigest
+  }).verify()).findings,['THIRD_HISTORY_PIN_MISMATCH']);
  }finally{
   if(source)await source.end().catch(()=>{});
   if(external)await external.end().catch(()=>{});
