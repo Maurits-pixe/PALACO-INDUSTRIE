@@ -57,6 +57,8 @@ jobs:
         run: node --test tests/postgres-authority-anchor.test.js
       - name: Detect restored authority database against secondary witness
         run: node --test tests/postgres-dual-authority-witness.test.js
+      - name: Verify append-only signed forensic incident ledger
+        run: node --test tests/postgres-incident-archive.test.js
       - name: Verify signed external checkpoint against PostgreSQL rollback
         run: node --test tests/postgres-checkpoint-verification.test.js
       - name: Verify strict checkpoint gate for SQLite issue and consume
