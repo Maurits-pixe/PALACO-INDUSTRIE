@@ -18,7 +18,6 @@ test('restricted PostgreSQL witness receiver records one signed nonce and reject
   const sql=f=>fs.readFileSync(path.join(__dirname,'../distribution/sql',f),'utf8');
   await admin.query(sql('incident-external-witness-v4.6.sql'));
   await admin.query(sql('incident-witness-receipts-v4.7.sql'));
-  await admin.query('TRUNCATE palaco_incident_witness.receipts');
   await admin.query("CREATE ROLE palaco_handoff_receiver_v47 LOGIN PASSWORD 'ci_receiver_only'");
   await admin.query('REVOKE ALL ON SCHEMA palaco_incident_witness FROM PUBLIC');
   await admin.query('REVOKE ALL ON palaco_incident_witness.heads FROM PUBLIC');
