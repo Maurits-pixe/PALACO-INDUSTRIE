@@ -1,5 +1,5 @@
 'use strict';
-// v5.1: verify primary full signed-evidence chain before independently
+// v5.3 opt-in extension: verify primary full signed-evidence chain before independently
 // recording a recipient-signed external root acknowledgement.
 // This is a trusted process adapter, not a public service or release gate.
 const {signedEvidenceChain,evidenceDigest,SELECT}=require('./signed-evidence-v5');
@@ -24,9 +24,16 @@ const CAS=[
  ' sender_signature,receipt_signature)',
  ' SELECT namespace,sequence,$6,$7,$8,$9::jsonb,$10::jsonb',
  ' FROM advanced RETURNING namespace,sequence,nonce',
+ '), dossier AS (',
+ ' INSERT INTO palaco_signed_evidence_anchor.transfer_dossiers',
+ ' (namespace,sequence,nonce,handoff_digest,handoff,recipient_receipt)',
+ ' SELECT r.namespace,r.sequence,r.nonce,$7,$11::jsonb,$12::jsonb',
+ ' FROM recorded r',
+ ' RETURNING namespace,sequence',
  ') SELECT a.sequence,a.chain_digest,r.nonce',
  ' FROM advanced a JOIN recorded r',
- ' ON a.namespace=r.namespace AND a.sequence=r.sequence'
+ ' ON a.namespace=r.namespace AND a.sequence=r.sequence',
+ ' JOIN dossier d ON a.namespace=d.namespace AND a.sequence=d.sequence'
 ].join('\n');
 function denied(reason){return Object.freeze({
  readiness:'BLOCKED',authorization:'DENY',go13:'HOLD',
@@ -118,7 +125,8 @@ function createSignedEvidenceAnchorReceiver({
     result=await anchorQuery({text:CAS,values:[
      namespace,previous.sequence,previous.digest,
      proof.sequence,proof.digest,proof.nonce,proof.handoffDigest,
-     h.recipientId,JSON.stringify(sig),JSON.stringify(ack)
+     h.recipientId,JSON.stringify(sig),JSON.stringify(ack),
+     JSON.stringify(h),JSON.stringify(r)
     ],signal});
    }catch(_){return denied('EVIDENCE_ANCHOR_CAS_OR_REPLAY_REJECTED');}
    if(signal?.aborted||result?.rowCount!==1||result.rows?.length!==1||
