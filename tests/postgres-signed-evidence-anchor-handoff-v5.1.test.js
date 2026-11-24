@@ -11,6 +11,8 @@ const {createSignedEvidenceAnchorReceiver}=
  require('../distribution/signed-evidence-anchor-receiver-v5.1');
 const {createEvidenceTransferReconciliationObserver}=
  require('../distribution/evidence-transfer-reconciliation-v5.2');
+const {createExternalTransferHistoryVerifier}=
+ require('../distribution/external-transfer-history-v5.3');
 test('PostgreSQL independently stored full-evidence root accepts signed CAS once and blocks restored source', {
  skip:process.env.PALACO_TEST_POSTGRES!=='1'
 },async()=>{
@@ -37,6 +39,7 @@ test('PostgreSQL independently stored full-evidence root accepts signed CAS once
   await source.query(evidence);await source.query(commitments);
   await external.query(sql('signed-evidence-external-anchor-v5.0.sql'));
   await external.query(sql('signed-evidence-anchor-receipts-v5.1.sql'));
+  await external.query(sql('signed-evidence-anchor-dossiers-v5.3.sql'));
   const namespace='palaco.v51ci';
   const keys=[generateKeyPairSync('ed25519'),generateKeyPairSync('ed25519')];
   const signHistoric=(bytes,index,keyId)=>({
@@ -97,15 +100,20 @@ test('PostgreSQL independently stored full-evidence root accepts signed CAS once
   await external.query('REVOKE ALL ON SCHEMA palaco_signed_evidence_anchor FROM PUBLIC');
   await external.query('REVOKE ALL ON palaco_signed_evidence_anchor.latest FROM PUBLIC');
   await external.query('REVOKE ALL ON palaco_signed_evidence_anchor.transfer_receipts FROM PUBLIC');
+  await external.query('REVOKE ALL ON palaco_signed_evidence_anchor.transfer_dossiers FROM PUBLIC');
   await external.query('GRANT USAGE ON SCHEMA palaco_signed_evidence_anchor TO palaco_v51_anchor_writer');
   await external.query('GRANT SELECT(namespace,sequence,chain_digest), UPDATE(sequence,chain_digest) ON palaco_signed_evidence_anchor.latest TO palaco_v51_anchor_writer');
   await external.query('GRANT SELECT,INSERT ON palaco_signed_evidence_anchor.transfer_receipts TO palaco_v51_anchor_writer');
+  await external.query('GRANT SELECT,INSERT ON palaco_signed_evidence_anchor.transfer_dossiers TO palaco_v51_anchor_writer');
   await external.query('ALTER TABLE palaco_signed_evidence_anchor.latest ENABLE ROW LEVEL SECURITY');
   await external.query('ALTER TABLE palaco_signed_evidence_anchor.transfer_receipts ENABLE ROW LEVEL SECURITY');
+  await external.query('ALTER TABLE palaco_signed_evidence_anchor.transfer_dossiers ENABLE ROW LEVEL SECURITY');
   await external.query("CREATE POLICY v51_head_read ON palaco_signed_evidence_anchor.latest FOR SELECT TO palaco_v51_anchor_writer USING(namespace='palaco.v51ci')");
   await external.query("CREATE POLICY v51_head_update ON palaco_signed_evidence_anchor.latest FOR UPDATE TO palaco_v51_anchor_writer USING(namespace='palaco.v51ci') WITH CHECK(namespace='palaco.v51ci')");
   await external.query("CREATE POLICY v51_receipt_read ON palaco_signed_evidence_anchor.transfer_receipts FOR SELECT TO palaco_v51_anchor_writer USING(namespace='palaco.v51ci')");
   await external.query("CREATE POLICY v51_receipt_insert ON palaco_signed_evidence_anchor.transfer_receipts FOR INSERT TO palaco_v51_anchor_writer WITH CHECK(namespace='palaco.v51ci')");
+  await external.query("CREATE POLICY v53_dossier_read ON palaco_signed_evidence_anchor.transfer_dossiers FOR SELECT TO palaco_v51_anchor_writer USING(namespace='palaco.v51ci')");
+  await external.query("CREATE POLICY v53_dossier_insert ON palaco_signed_evidence_anchor.transfer_dossiers FOR INSERT TO palaco_v51_anchor_writer WITH CHECK(namespace='palaco.v51ci')");
   const restricted=new URL(url('palaco_full_evidence_v51_root'));
   restricted.username='palaco_v51_anchor_writer';restricted.password='ci_only_v51';
   writer=new Client({connectionString:restricted.toString()});await writer.connect();
@@ -148,6 +156,14 @@ test('PostgreSQL independently stored full-evidence root accepts signed CAS once
   const result=await receiver.receive(...params);
   assert.equal(result.readiness,'EVIDENCE_ANCHOR_RECEIPT_RECORDED_NON_AUTHORIZING');
   assert.equal(result.authorization,'DENY');assert.equal(result.go13,'HOLD');
+  const historical=createExternalTransferHistoryVerifier({
+   namespace,genesisSequence:11,genesisDigest:previous.digest,
+   anchorQuery:q=>writer.query(q),historicalRootsProvider:async()=>roots
+  });
+  const historicalVerified=await historical.verify();
+  assert.equal(historicalVerified.readiness,
+   'EXTERNAL_TRANSFER_HISTORY_VERIFIED_NON_AUTHORIZING');
+  assert.equal(historicalVerified.verifiedSignatures,2);
   const afterTransfer=await observer.inspect();
   assert.equal(afterTransfer.readiness,'MATCHED_NON_AUTHORIZING');
   assert.equal(afterTransfer.mayRestore,false);
@@ -156,14 +172,28 @@ test('PostgreSQL independently stored full-evidence root accepts signed CAS once
    'SELECT nonce,handoff_digest FROM palaco_signed_evidence_anchor.transfer_receipts WHERE namespace=$1',
    [namespace]);
   assert.deepEqual(recorded.rows,[{nonce:handoff.nonce,handoff_digest:handoffDigest(handoff)}]);
+  const dossier=await writer.query(
+   'SELECT handoff,recipient_receipt FROM palaco_signed_evidence_anchor.transfer_dossiers WHERE namespace=$1',
+   [namespace]);
+  assert.equal(dossier.rowCount,1);
+  assert.deepEqual(dossier.rows[0].handoff,handoff);
+  assert.deepEqual(dossier.rows[0].recipient_receipt,receipt);
   for(const statement of [
    'DELETE FROM palaco_signed_evidence_anchor.transfer_receipts',
+   'DELETE FROM palaco_signed_evidence_anchor.transfer_dossiers',
+   'TRUNCATE palaco_signed_evidence_anchor.transfer_dossiers',
    'TRUNCATE palaco_signed_evidence_anchor.transfer_receipts',
    'ALTER TABLE palaco_signed_evidence_anchor.latest DISABLE TRIGGER guard_evidence_anchor_update'
   ])await assert.rejects(writer.query(statement),e=>e.code==='42501');
   // Independent root cannot be forged backward by restricted principal.
   await assert.rejects(writer.query(
    'UPDATE palaco_signed_evidence_anchor.latest SET sequence=11 WHERE namespace=$1',
+   [namespace]),e=>e.code==='23514');
+  await assert.rejects(external.query(
+   "UPDATE palaco_signed_evidence_anchor.transfer_receipts SET nonce='tampered' WHERE namespace=$1",
+   [namespace]),e=>e.code==='23514');
+  await assert.rejects(external.query(
+   'DELETE FROM palaco_signed_evidence_anchor.transfer_dossiers WHERE namespace=$1',
    [namespace]),e=>e.code==='23514');
   // Privileged source restore: external head and receipt remain unchanged.
   await source.query('DROP SCHEMA palaco_incident_witness CASCADE');
@@ -176,6 +206,11 @@ test('PostgreSQL independently stored full-evidence root accepts signed CAS once
   assert.equal((await external.query(
    'SELECT count(*)::int AS total FROM palaco_signed_evidence_anchor.transfer_receipts'
   )).rows[0].total,1);
+  assert.equal((await historical.verify()).readiness,
+   'EXTERNAL_TRANSFER_HISTORY_VERIFIED_NON_AUTHORIZING');
+  await external.query('DROP TABLE palaco_signed_evidence_anchor.transfer_dossiers');
+  await external.query(sql('signed-evidence-anchor-dossiers-v5.3.sql'));
+  assert.equal((await historical.verify()).readiness,'BLOCKED');
  }finally{
   if(writer)await writer.end().catch(()=>{});
   if(source)await source.end().catch(()=>{});
