@@ -7,6 +7,7 @@ const path=require('node:path');
 const {generateKeyPairSync,sign}=require('node:crypto');
 const {incidentPayload,incidentDigest}=require('../distribution/witness-incident-review');
 const {createIncidentArchive}=require('../distribution/incident-append-only-archive');
+const {createIncidentWriteGateway}=require('../distribution/incident-write-gateway');
 
 test('separate archive reader and writer roles enforce least privilege', {
  skip:process.env.PALACO_TEST_POSTGRES!=='1'
@@ -62,12 +63,21 @@ test('separate archive reader and writer roles enforce least privilege', {
   });
   assert.deepEqual(denied.findings,['INCIDENT_ARCHIVE_APPEND_REJECTED']);
   assert.equal(denied.authorization,'DENY');
-  assert.equal((await writeArchive.appendReviewed(dossier,signatures,{
-   nowMs:2000,pinnedReviewRoots:roots
-  })).readiness,'INCIDENT_ARCHIVED_NON_AUTHORIZING');
+  const writerGateway=createIncidentWriteGateway({
+    namespace:scope,query:request=>writer.query(request),
+    reviewPolicyProvider:async()=>({nowMs:2000,pinnedReviewRoots:roots}),
+    primaryWitness:{namespace:scope,latest:async()=>({...dossier.primary})},
+    secondaryWitness:{namespace:scope,latest:async()=>({...dossier.secondary})}
+  });
+  assert.equal(typeof writerGateway.query,'undefined');
+  assert.equal((await writerGateway.submit(dossier,signatures)).readiness,
+    'INCIDENT_GATEWAY_ARCHIVED_NON_AUTHORIZING');
   assert.deepEqual(await readArchive.latest(),{
    sequence:1,digest:incidentDigest(dossier)
   });
+  const rejected=await writerGateway.submit(dossier,signatures);
+  assert.deepEqual(rejected.findings,['INCIDENT_GATEWAY_HEAD_MISMATCH']);
+
   assert.deepEqual((await reader.query(
    'SELECT incident_id FROM palaco_incident_archive.entries')).rows,
    [{incident_id:'archive-v44-first'}]);
