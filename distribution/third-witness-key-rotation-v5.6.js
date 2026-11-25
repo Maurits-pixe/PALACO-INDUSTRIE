@@ -81,7 +81,7 @@ function verifyThirdWitnessKeyRotation({
  if(retiring.keyId!==transition.retiringKeyId||
   successor.keyId!==transition.successorKeyId||
   successor.observerId!==retiring.observerId||
-  successor.validFromMs<retiring.validUntilMs||
+  successor.validFromMs!==retiring.validUntilMs||
   transition.rotatedAtMs<retiring.validFromMs||
   transition.rotatedAtMs>=retiring.validUntilMs||
   transition.rotatedAtMs>successor.validFromMs||
