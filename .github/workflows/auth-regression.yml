@@ -73,6 +73,8 @@ jobs:
         run: node --test tests/postgres-signed-evidence-anchor-handoff-v5.1.test.js
       - name: Reject all-three-database rollback against independently pinned third witness key history v5.5
         run: node --test tests/postgres-third-party-evidence-checkpoint-v5.4.test.js
+      - name: Verify triple-signed key manifest succession and restricted rotation attestation v5.6
+        run: node --test tests/postgres-third-witness-key-rotation-v5.6.test.js
       - name: Verify isolated incident archive reader and writer permissions
         run: node --test tests/postgres-incident-archive-privileges.test.js
       - name: Verify signed external checkpoint against PostgreSQL rollback
