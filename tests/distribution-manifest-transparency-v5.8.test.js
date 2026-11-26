@@ -75,8 +75,7 @@ test('privileged restored log is denied by independent signed high watermark',as
  assert.deepEqual(out.findings,['TRANSPARENCY_CHECKPOINT_HEAD_MISMATCH']);
  const rolled=await f.create(f.rows,
   f.signedHead(1,f.rows[0].entry_digest)).verify();
- assert.equal(rolled.readiness,'MANIFEST_TRANSPARENCY_VERIFIED_NON_AUTHORIZING'===rolled.readiness?
-  'MANIFEST_TRANSPARENCY_VERIFIED_NON_AUTHORIZING':'BLOCKED');
+ assert.deepEqual(rolled.findings,['TRANSPARENCY_CHECKPOINT_HEAD_MISMATCH']);
 });
 test('forged signed events, altered digest and invalid signed checkpoint reject',async()=>{
  const f=fixture();
