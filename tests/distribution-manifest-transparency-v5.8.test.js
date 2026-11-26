@@ -105,6 +105,22 @@ test('authentic contradictory second observer triggers split view',async()=>{
  const r=await f.create([f.rows[0],e],f.signedHead(2,e.entry_digest)).verify();
  assert.deepEqual(r.findings,['TRANSPARENCY_AUTHENTIC_SPLIT_VIEW']);
 });
+test('authentic same successor with conflicting predecessor is split-view',async()=>{
+ const f=fixture();
+ const e={...f.rows[1],previous_manifest_digest:'d'.repeat(64)};
+ const view={schemaVersion:VERSION,namespace:f.namespace,rotationNumber:1,
+  manifestDigest:e.manifest_digest,
+  previousManifestDigest:e.previous_manifest_digest,
+  observerId:e.observer_id,observedAtMs:1501,
+  authorization:'DENY',go13:'HOLD',
+  purpose:'MANIFEST_VIEW_OBSERVATION_NO_RELEASE'};
+ e.signature=sign(null,publicationBytes(view),f.keys[1].privateKey)
+  .toString('base64');
+ e.entry_digest=entryDigest(e,e.previous_entry_digest);
+ assert.deepEqual(
+  (await f.create([f.rows[0],e],f.signedHead(2,e.entry_digest)).verify()).findings,
+  ['TRANSPARENCY_AUTHENTIC_SPLIT_VIEW']);
+});
 test('unavailable external checkpoint and aborted verification fail closed',async()=>{
  const f=fixture();
  const abort=new AbortController();abort.abort();
