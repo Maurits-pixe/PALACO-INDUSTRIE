@@ -139,7 +139,7 @@ function denial(reason){return Object.freeze({
  maySynchronize:false,mayInstall:false,mayPublish:false,
  findings:Object.freeze([reason])
 });}
-async function createRootVerifier({
+function createRootVerifier({
  namespace,checkpointQuery,trustRootProvider
 }={}){
  if(!NS.test(namespace||'')||typeof checkpointQuery!=='function'||
