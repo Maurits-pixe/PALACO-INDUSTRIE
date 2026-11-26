@@ -124,7 +124,8 @@ function createManifestTransparencyVerifier({
    (anchorSeq===pinnedCheckpointSequence&&
     row.entry_digest!==pinnedCheckpointDigest))
    return deny('TRANSPARENCY_PINNED_ROLLBACK');
-  let previous=ZERO,sequence=0,priorRotation=0,priorManifest=null;
+  let previous=ZERO,sequence=0,priorRotation=0,priorManifest=null,
+   priorPredecessorManifest=null;
   const seen=new Set();let pinnedAt=null;
   for(const e of log.rows){
    if(signal?.aborted)return deny('TRANSPARENCY_ABORTED');
@@ -151,9 +152,14 @@ function createManifestTransparencyVerifier({
    if(!signatureValid(viewBytes(e),e.signature,e.key_id,
     observerRoot,e.observer_id))
     return deny('TRANSPARENCY_OBSERVATION_SIGNATURE_INVALID');
-   if(rotation===priorRotation&&e.manifest_digest!==priorManifest)
+   if(rotation===priorRotation&&
+    (e.manifest_digest!==priorManifest||
+     e.previous_manifest_digest!==priorPredecessorManifest))
     return deny('TRANSPARENCY_AUTHENTIC_SPLIT_VIEW');
-   if(rotation!==priorRotation)priorManifest=e.manifest_digest;
+   if(rotation!==priorRotation){
+    priorManifest=e.manifest_digest;
+    priorPredecessorManifest=e.previous_manifest_digest;
+   }
    priorRotation=rotation;sequence=n;previous=digest;
    if(n===pinnedCheckpointSequence)pinnedAt=previous;
   }
