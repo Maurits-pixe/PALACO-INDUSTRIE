@@ -10,8 +10,8 @@ CREATE TABLE IF NOT EXISTS palaco_proof_verification_audit.events(
  timestamp_ms bigint NOT NULL CHECK(timestamp_ms>=0),
  readiness text NOT NULL CHECK(readiness ~ '^[A-Z_]{3,100}$'),
  finding text CHECK(finding ~ '^[A-Z_]{3,100}$'),
- authorization text NOT NULL DEFAULT 'DENY' CHECK(authorization='DENY'),
- go13 text NOT NULL DEFAULT 'HOLD' CHECK(go13='HOLD')
+ authorization_status text NOT NULL DEFAULT 'DENY' CHECK(authorization_status='DENY'),
+ go13_status text NOT NULL DEFAULT 'HOLD' CHECK(go13_status='HOLD')
 );
 CREATE OR REPLACE FUNCTION palaco_proof_verification_audit.deny_mutation()
 RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER
