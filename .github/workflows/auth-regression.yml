@@ -83,6 +83,8 @@ jobs:
         run: node --test tests/postgres-manifest-merkle-proofs-v5.9.test.js
       - name: Verify independent bounded proof issuer and signed-root verification after archive rollback v6.0
         run: node --test tests/postgres-manifest-proof-service-v6.0.test.js
+      - name: Verify bounded fail-closed proof gateway and restricted immutable PostgreSQL audit v6.1
+        run: node --test tests/postgres-manifest-proof-gateway-v6.1.test.js
       - name: Verify isolated incident archive reader and writer permissions
         run: node --test tests/postgres-incident-archive-privileges.test.js
       - name: Verify signed external checkpoint against PostgreSQL rollback
