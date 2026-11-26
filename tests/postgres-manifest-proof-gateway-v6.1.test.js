@@ -44,7 +44,7 @@ test('PostgreSQL restricted append-only proof gateway audit persists denials and
   const insert=[
    'INSERT INTO palaco_proof_verification_audit.events',
    '(namespace,principal_id,request_id,request_digest,timestamp_ms,',
-   'readiness,finding,authorization,go13)',
+   'readiness,finding,authorization_status,go13_status)',
    'VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)'
   ].join(' ');
   let now=1000;
@@ -69,14 +69,14 @@ test('PostgreSQL restricted append-only proof gateway audit persists denials and
    ['PROOF_GATEWAY_RATE_LIMIT']);
   assert.equal(verified,1);
   const count=await writer.query(
-   'SELECT readiness,authorization,go13 FROM palaco_proof_verification_audit.events ORDER BY event_id'
+   'SELECT readiness,authorization_status,go13_status FROM palaco_proof_verification_audit.events ORDER BY event_id'
   );
   assert.equal(count.rowCount,3);
   assert.deepEqual(count.rows.map(x=>x.readiness),[
    'PROOF_GATEWAY_VERIFIED_NON_AUTHORIZING','BLOCKED','BLOCKED']);
-  assert.ok(count.rows.every(x=>x.authorization==='DENY'&&x.go13==='HOLD'));
+  assert.ok(count.rows.every(x=>x.authorization_status==='DENY'&&x.go13_status==='HOLD'));
   for(const sql of [
-   'UPDATE palaco_proof_verification_audit.events SET authorization=$1',
+   'UPDATE palaco_proof_verification_audit.events SET authorization_status=$1',
    'DELETE FROM palaco_proof_verification_audit.events',
    'TRUNCATE palaco_proof_verification_audit.events',
    'ALTER TABLE palaco_proof_verification_audit.events DISABLE TRIGGER deny_proof_audit_change'
