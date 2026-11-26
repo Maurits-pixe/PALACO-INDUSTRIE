@@ -77,6 +77,8 @@ jobs:
         run: node --test tests/postgres-third-witness-key-rotation-v5.6.test.js
       - name: Detect independently signed manifest publication split-view v5.7
         run: node --test tests/postgres-manifest-publication-views-v5.7.test.js
+      - name: Verify signed manifest transparency chain and independent restored-log checkpoint v5.8
+        run: node --test tests/postgres-manifest-transparency-v5.8.test.js
       - name: Verify isolated incident archive reader and writer permissions
         run: node --test tests/postgres-incident-archive-privileges.test.js
       - name: Verify signed external checkpoint against PostgreSQL rollback
