@@ -65,7 +65,7 @@ test('per-minute quota limits even denied inputs; no successful bypass',async()=
  assert.equal((await f.service.handle(null)).readiness,'BLOCKED');
  assert.equal((await f.service.handle(f.request('request-0002'))).readiness,
   'PROOF_GATEWAY_VERIFIED_NON_AUTHORIZING');
- assert.deepEqual((await f.service.handle(f.request('request-0003')).findings,
+ assert.deepEqual((await f.service.handle(f.request('request-0003'))).findings,
   ['PROOF_GATEWAY_RATE_LIMIT']);
  assert.equal(f.events.length,3);
 });
@@ -73,10 +73,10 @@ test('non-monotone clock, audit errors and unavailability fail closed',async()=>
  const f=fixture();
  await f.service.handle(f.request());
  f.setTime(999);
- assert.deepEqual((await f.service.handle(f.request('request-0002')).findings,
+ assert.deepEqual((await f.service.handle(f.request('request-0002'))).findings,
   ['PROOF_GATEWAY_CLOCK_INVALID']);
  const broken=fixture({auditAppend:async()=>false});
- assert.deepEqual((await broken.service.handle(broken.request()).findings,
+ assert.deepEqual((await broken.service.handle(broken.request())).findings,
   ['PROOF_GATEWAY_AUDIT_UNAVAILABLE']);
  const throws=fixture({auditAppend:async()=>{throw Error('offline');}});
  assert.equal((await throws.service.handle(throws.request())).readiness,'BLOCKED');
