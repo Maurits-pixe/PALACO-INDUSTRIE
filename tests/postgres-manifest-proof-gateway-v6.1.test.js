@@ -63,9 +63,9 @@ test('PostgreSQL restricted append-only proof gateway audit persists denials and
   });
   assert.equal((await service.handle(request('request-0001'))).readiness,
    'PROOF_GATEWAY_VERIFIED_NON_AUTHORIZING');
-  assert.deepEqual((await service.handle(request('request-0001')).findings,
+  assert.deepEqual((await service.handle(request('request-0001'))).findings,
    ['PROOF_GATEWAY_REPLAY']);
-  assert.deepEqual((await service.handle(request('request-0002')).findings,
+  assert.deepEqual((await service.handle(request('request-0002'))).findings,
    ['PROOF_GATEWAY_RATE_LIMIT']);
   assert.equal(verified,1);
   const count=await writer.query(
@@ -88,7 +88,7 @@ test('PostgreSQL restricted append-only proof gateway audit persists denials and
    'DELETE FROM palaco_proof_verification_audit.events'),e=>e.code==='23514');
   // A real database outage blocks a fresh request, even if verifier returns valid.
   await writer.end();writer=null;now=61000;
-  assert.deepEqual((await service.handle(request('request-0003')).findings,
+  assert.deepEqual((await service.handle(request('request-0003'))).findings,
    ['PROOF_GATEWAY_AUDIT_UNAVAILABLE']);
  }finally{
   if(writer)await writer.end().catch(()=>{});
