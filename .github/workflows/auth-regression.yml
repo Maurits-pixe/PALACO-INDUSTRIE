@@ -10,12 +10,123 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Root application files and tests only. Imported historical snapshots
-          # include filenames beyond the runner filesystem's component limit.
+          # Root application files, tests, and distribution modules.
+          # Avoid imported historical snapshots with overlong filenames.
           sparse-checkout: |
             tests
+            distribution
       - uses: actions/setup-node@v4
         with:
           node-version: 24
       - run: npm run check
       - run: npm test
+
+  postgres-continuity-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: palaco_ci
+          POSTGRES_PASSWORD: local_ci_only
+          POSTGRES_DB: palaco_continuity_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U palaco_ci -d palaco_continuity_ci"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      PALACO_TEST_POSTGRES: "1"
+      PALACO_TEST_DATABASE_URL: postgresql://palaco_ci:local_ci_only@127.0.0.1:5432/palaco_continuity_ci
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            tests
+            distribution
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      # Only the disposable CI job installs a test driver; production
+      # runtime dependencies and lockfiles are unchanged.
+      - run: npm install --no-save --no-package-lock --ignore-scripts pg@8.16.3
+      - run: node --test tests/postgres-live-continuity.test.js
+      - name: Verify durable independent authority anchor anti-replay
+        run: node --test tests/postgres-authority-anchor.test.js
+      - name: Detect restored authority database against secondary witness
+        run: node --test tests/postgres-dual-authority-witness.test.js
+      - name: Verify append-only signed forensic incident ledger
+        run: node --test tests/postgres-incident-archive.test.js
+      - name: Verify external incident witness detects privileged archive restore
+        run: node --test tests/postgres-incident-external-witness.test.js
+      - name: Verify recipient-signed witness handoff and restricted replay ledger
+        run: node --test tests/postgres-incident-witness-handoff.test.js
+      - name: Verify anchored receipt succession and restored registry rejection
+        run: node --test tests/postgres-receipt-succession.test.js
+      - name: Reverify archived historical receipt signatures and reject tampered evidence
+        run: node --test tests/postgres-historical-receipt-evidence.test.js
+      - name: Verify atomic complete signed receipts and independent evidence root v5
+        run: node --test tests/postgres-atomic-signed-evidence-v5.test.js
+      - name: Verify full external transfer signatures, atomic dossier storage and partial-write diagnostics v5.3
+        run: node --test tests/postgres-signed-evidence-anchor-handoff-v5.1.test.js
+      - name: Reject all-three-database rollback against independently pinned third witness key history v5.5
+        run: node --test tests/postgres-third-party-evidence-checkpoint-v5.4.test.js
+      - name: Verify triple-signed key manifest succession and restricted rotation attestation v5.6
+        run: node --test tests/postgres-third-witness-key-rotation-v5.6.test.js
+      - name: Detect independently signed manifest publication split-view v5.7
+        run: node --test tests/postgres-manifest-publication-views-v5.7.test.js
+      - name: Verify signed manifest transparency chain and independent restored-log checkpoint v5.8
+        run: node --test tests/postgres-manifest-transparency-v5.8.test.js
+      - name: Verify compact Merkle inclusion, append-only consistency and signed root rollback v5.9
+        run: node --test tests/postgres-manifest-merkle-proofs-v5.9.test.js
+      - name: Verify independent bounded proof issuer and signed-root verification after archive rollback v6.0
+        run: node --test tests/postgres-manifest-proof-service-v6.0.test.js
+      - name: Verify bounded fail-closed proof gateway and restricted immutable PostgreSQL audit v6.1
+        run: node --test tests/postgres-manifest-proof-gateway-v6.1.test.js
+      - name: Verify isolated incident archive reader and writer permissions
+        run: node --test tests/postgres-incident-archive-privileges.test.js
+      - name: Verify signed external checkpoint against PostgreSQL rollback
+        run: node --test tests/postgres-checkpoint-verification.test.js
+      - name: Verify strict checkpoint gate for SQLite issue and consume
+        run: node --test tests/postgres-checkpoint-strict-execution.test.js
+      - name: Reject restored SQLite backup against independent PostgreSQL witness
+        run: node --test tests/postgres-independent-rollback-rejection.test.js
+      - name: Test restricted PostgreSQL runtime role
+        run: node --test tests/postgres-runtime-privileges.test.js
+      - name: Test restricted authority anchor runtime role
+        run: node --test tests/postgres-authority-anchor-privileges.test.js
+      - name: Prepare persistent authority head before crash
+        env:
+          PALACO_TEST_PHASE: prepare
+        run: node --test tests/postgres-authority-anchor-crash-recovery.test.js
+      - name: Prepare committed continuity high-watermark
+        env:
+          PALACO_TEST_PHASE: prepare
+        run: node --test tests/postgres-crash-recovery.test.js
+      - name: Abruptly terminate and restart isolated PostgreSQL 17
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t ids < <(docker ps --filter "ancestor=postgres:17" --format '{{.ID}}')
+          test "${#ids[@]}" -eq 1
+          docker kill --signal=KILL "${ids[0]}"
+          docker start "${ids[0]}"
+          ready=0
+          for attempt in $(seq 1 45); do
+            if pg_isready -h 127.0.0.1 -p 5432 -U palaco_ci -d palaco_continuity_ci >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" -eq 1
+      - name: Verify recovery and reject regression
+        env:
+          PALACO_TEST_PHASE: verify
+        run: node --test tests/postgres-crash-recovery.test.js
+      - name: Verify durable authority head after abrupt PostgreSQL restart
+        env:
+          PALACO_TEST_PHASE: verify
+        run: node --test tests/postgres-authority-anchor-crash-recovery.test.js

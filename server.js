@@ -4,6 +4,8 @@ const fsPromises = require("node:fs/promises");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { DatabaseSync } = require("node:sqlite");
+const { dispatchDistributionHttp } = require("./distribution/application-challenge-http");
+const { createDistributionStartupInterlock } = require("./distribution/distribution-startup-interlock");
 
 const HOST = process.env.HOST || "0.0.0.0";
 const PORT = Number(process.env.PORT || 3000);
@@ -51,6 +53,7 @@ const CONTENT_TYPES = {
 const THEMES = new Set(["light", "sunrise", "forest", "midnight"]);
 
 let database;
+const distributionStartup = createDistributionStartupInterlock(process.env);
 
 const defaultMessages = (name = "there") => [
   {
@@ -1175,6 +1178,23 @@ const server = http.createServer(async (request, response) => {
   try {
     const url = new URL(request.url, `http://${request.headers.host || "localhost"}`);
     const { pathname } = url;
+
+    // Dedicated distribution perimeter: deliberately disabled until an
+    // independently anchored and reviewed ingress is provisioned. No legacy
+    // challenge route can bypass this branch. Other APIs are unchanged.
+    if (pathname.startsWith("/api/distribution/")) {
+      const auth = getAuthenticatedUser(request);
+      const result = await dispatchDistributionHttp({
+        method: request.method,
+        path: pathname,
+        authenticated: Boolean(auth),
+        csrfValid: Boolean(auth && verifyCsrfToken(request, auth.session)),
+        ingress: distributionStartup.ingress,
+        readBody: () => readRequestBody(request)
+      });
+      sendJson(response, result.status, result.payload);
+      return;
+    }
 
     if (request.method === "GET" && pathname === "/api/health") {
       sendJson(response, 200, { ok: true });
