@@ -79,6 +79,8 @@ jobs:
         run: node --test tests/postgres-manifest-publication-views-v5.7.test.js
       - name: Verify signed manifest transparency chain and independent restored-log checkpoint v5.8
         run: node --test tests/postgres-manifest-transparency-v5.8.test.js
+      - name: Verify compact Merkle inclusion, append-only consistency and signed root rollback v5.9
+        run: node --test tests/postgres-manifest-merkle-proofs-v5.9.test.js
       - name: Verify isolated incident archive reader and writer permissions
         run: node --test tests/postgres-incident-archive-privileges.test.js
       - name: Verify signed external checkpoint against PostgreSQL rollback
